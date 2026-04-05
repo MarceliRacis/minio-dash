@@ -166,4 +166,4 @@ minio-dash/
 
 ## Author
 
-Created by [Marceli Racis](https://racis.dev)
+Created by [Marceli Racis](https://racis.dev) 
