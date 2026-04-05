@@ -1250,17 +1250,48 @@ def _gen_password(n=20):
 
 # ─── MAIN ─────────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+WEBUI_HOST = os.environ.get("WEBUI_HOST", f"http://localhost:{PORT}")
+
+def _print_banner():
     print(f"""
-  ╔══════════════════════════════════════════╗
-  ║   minio-dash v2  →  http://localhost:{PORT}  ║
-  ╚══════════════════════════════════════════╝
+  ╔══════════════════════════════════════════════╗
+  ║                minio-dash v2                 ║
+  ╚══════════════════════════════════════════════╝
 
   Endpoint : {'https' if MINIO_SECURE else 'http'}://{MINIO_HOST}
   Port     : {PORT}
   Auth     : JWT (HS256), TTL {SESSION_TTL//3600}h
-
-  Set MINIO_ENDPOINT env var to point at your MinIO.
-  Set SECRET_KEY env var for persistent JWT secret.
+  WebUI    : {WEBUI_HOST}
 """)
-    app.run(host="0.0.0.0", port=PORT, debug=False)
+
+GUNICORN_WORKERS = int(os.environ.get("GUNICORN_WORKERS", 0))
+GUNICORN_THREADS  = int(os.environ.get("GUNICORN_THREADS", 0))
+
+if __name__ == "__main__":
+    _print_banner()
+    try:
+        import gunicorn.app.base
+
+        workers = GUNICORN_WORKERS or 2
+        threads  = GUNICORN_THREADS  or 1
+        if not GUNICORN_WORKERS and not GUNICORN_THREADS:
+            print("  [gunicorn] GUNICORN_WORKERS / GUNICORN_THREADS not set — using defaults (workers=2, threads=1)")
+        else:
+            print(f"  [gunicorn] workers={workers}  threads={threads}")
+
+        class _App(gunicorn.app.base.BaseApplication):
+            def load_config(self):
+                self.cfg.set("bind",      f"0.0.0.0:{PORT}")
+                self.cfg.set("workers",   workers)
+                self.cfg.set("threads",   threads)
+                self.cfg.set("timeout",   120)
+                self.cfg.set("accesslog", "-")
+                self.cfg.set("errorlog",  "-")
+            def load(self):
+                return app
+
+        _App().run()
+    except ImportError:
+        print("  [warn] gunicorn not installed — falling back to Flask dev server")
+        print("         pip install gunicorn")
+        app.run(host="0.0.0.0", port=PORT, debug=False, threaded=True)

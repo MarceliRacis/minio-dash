@@ -38,6 +38,3 @@ Thumbs.db
 
 # Docker
 *.tar
-
-# Local locale overrides (bundled in ui.html, overrides are optional)
-locales/
