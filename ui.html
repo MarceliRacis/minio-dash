@@ -1,0 +1,1517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>minio-dash</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg0:#0a0b0d;--bg1:#0f1115;--bg2:#151820;--bg3:#1c2028;--bg4:#242936;
+  --border:#2a3040;--border2:#3a4558;
+  --text0:#e8eaf0;--text1:#a8b0c0;--text2:#606878;
+  --accent:#4f8ef7;--accent2:#3a75e0;
+  --green:#3dd68c;--red:#f7574f;--yellow:#f7c948;--purple:#a78bfa;--orange:#fb923c;--cyan:#22d3ee;
+  --mono:'JetBrains Mono',monospace;--sans:'Syne',sans-serif;
+  --r:6px;--r2:10px;--sidebar:220px;--topbar:52px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--sans);background:var(--bg0);color:var(--text0);font-size:14px;line-height:1.5}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+
+/* LOGIN */
+#login-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg0);z-index:1000}
+.login-card{width:360px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:40px 36px}
+.login-logo{font-weight:800;font-size:22px;letter-spacing:-.5px;margin-bottom:8px}
+.login-logo span{color:var(--accent)}
+.login-sub{font-size:12px;color:var(--text2);font-family:var(--mono);margin-bottom:32px}
+.login-field{margin-bottom:16px}
+.login-field label{display:block;font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text2);margin-bottom:6px}
+.login-field input{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;color:var(--text0);font-family:var(--mono);font-size:13px;outline:none;transition:border-color .2s}
+.login-field input:focus{border-color:var(--accent)}
+.login-btn{width:100%;margin-top:8px;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:var(--r);font-family:var(--sans);font-weight:600;font-size:14px;cursor:pointer;transition:background .2s}
+.login-btn:hover{background:var(--accent2)}
+.login-err{margin-top:12px;padding:10px 12px;background:rgba(247,87,79,.1);border:1px solid rgba(247,87,79,.3);border-radius:var(--r);color:var(--red);font-size:12px;font-family:var(--mono);display:none}
+
+/* LAYOUT */
+#app{display:none;height:100vh;flex-direction:column}
+#app.visible{display:flex}
+#topbar{height:var(--topbar);background:var(--bg1);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;flex-shrink:0;z-index:100}
+.topbar-logo{font-weight:800;font-size:16px;letter-spacing:-.3px}
+.topbar-logo span{color:var(--accent)}
+.topbar-endpoint{font-family:var(--mono);font-size:11px;color:var(--text2);background:var(--bg3);padding:3px 8px;border-radius:4px}
+.topbar-spacer{flex:1}
+.topbar-user{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text1)}
+.topbar-avatar{width:28px;height:28px;background:var(--accent);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;font-family:var(--mono);flex-shrink:0}
+.topbar-badge{font-size:10px;padding:2px 6px;border-radius:3px;font-family:var(--mono);font-weight:600;background:rgba(167,139,250,.15);color:var(--purple);border:1px solid rgba(167,139,250,.3)}
+#btn-logout{padding:5px 12px;background:transparent;border:1px solid var(--border2);border-radius:var(--r);color:var(--text2);font-size:12px;cursor:pointer;transition:all .2s;font-family:var(--sans)}
+#btn-logout:hover{border-color:var(--red);color:var(--red)}
+#menu-toggle{display:none;background:none;border:1px solid var(--border);border-radius:var(--r);padding:5px 8px;color:var(--text1);cursor:pointer;font-size:16px}
+#body{flex:1;display:flex;overflow:hidden}
+#sidebar{width:var(--sidebar);background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;transition:transform .25s}
+.nav-section{padding:16px 12px 8px;font-size:10px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--text2);font-family:var(--mono)}
+.nav-item{display:flex;align-items:center;gap:10px;padding:8px 14px;margin:1px 8px;border-radius:var(--r);cursor:pointer;color:var(--text1);font-size:13px;font-weight:500;transition:all .15s;user-select:none}
+.nav-item:hover{background:var(--bg3);color:var(--text0)}
+.nav-item.active{background:rgba(79,142,247,.12);color:var(--accent)}
+.nav-item .icon{width:18px;text-align:center;font-size:15px;flex-shrink:0;opacity:.8}
+.nav-bucket{font-size:12px;padding:6px 14px;font-family:var(--mono)}
+.nav-bucket .icon{font-size:12px}
+.sidebar-bottom{margin-top:auto;padding:12px;border-top:1px solid var(--border)}
+.sidebar-endpoint{font-family:var(--mono);font-size:10px;color:var(--text2);word-break:break-all}
+.sidebar-footer{margin-top:8px;font-family:var(--mono);font-size:10px;color:var(--text2);line-height:1.6}
+.sidebar-footer a{color:var(--text2);text-decoration:none;border-bottom:1px solid transparent;transition:color .15s,border-color .15s}
+.sidebar-footer a:hover{color:var(--accent);border-bottom-color:var(--accent)}
+#main{flex:1;overflow-y:auto;background:var(--bg0)}
+.page{display:none;padding:24px}
+.page.active{display:block}
+.page-header{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+.page-title{font-size:20px;font-weight:700;letter-spacing:-.3px}
+.page-sub{font-size:12px;color:var(--text2);font-family:var(--mono);margin-top:2px}
+.page-actions{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+
+/* STAT CARDS */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:28px}
+.stat-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:18px 20px}
+.stat-label{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text2);margin-bottom:8px;font-family:var(--mono)}
+.stat-value{font-size:28px;font-weight:700;font-family:var(--mono);letter-spacing:-1px;line-height:1}
+.stat-value.green{color:var(--green)}.stat-value.red{color:var(--red)}.stat-value.blue{color:var(--accent)}.stat-value.yellow{color:var(--yellow)}
+
+/* TABLE */
+.table-wrap{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+table{width:100%;border-collapse:collapse}
+thead{background:var(--bg3)}
+th{padding:10px 14px;text-align:left;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text2);font-family:var(--mono);white-space:nowrap}
+td{padding:11px 14px;border-top:1px solid var(--border);font-size:13px;vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.02)}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border-radius:var(--r);font-family:var(--sans);font-size:13px;font-weight:600;cursor:pointer;border:none;transition:all .15s;white-space:nowrap}
+.btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent2)}
+.btn-ghost{background:transparent;border:1px solid var(--border2);color:var(--text1)}.btn-ghost:hover{border-color:var(--text1);color:var(--text0)}
+.btn-danger{background:rgba(247,87,79,.1);border:1px solid rgba(247,87,79,.3);color:var(--red)}.btn-danger:hover{background:rgba(247,87,79,.2)}
+.btn-success{background:rgba(61,214,140,.1);border:1px solid rgba(61,214,140,.3);color:var(--green)}.btn-success:hover{background:rgba(61,214,140,.2)}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-icon{padding:5px 8px;background:transparent;border:1px solid var(--border);border-radius:var(--r);color:var(--text2);cursor:pointer;transition:all .15s;font-size:14px}
+.btn-icon:hover{border-color:var(--text1);color:var(--text0)}
+
+/* BADGE */
+.badge{display:inline-block;padding:2px 8px;border-radius:3px;font-size:11px;font-weight:600;font-family:var(--mono)}
+.badge-green{background:rgba(61,214,140,.15);color:var(--green);border:1px solid rgba(61,214,140,.3)}
+.badge-red{background:rgba(247,87,79,.15);color:var(--red);border:1px solid rgba(247,87,79,.3)}
+.badge-blue{background:rgba(79,142,247,.15);color:var(--accent);border:1px solid rgba(79,142,247,.3)}
+.badge-gray{background:rgba(96,104,120,.2);color:var(--text2);border:1px solid rgba(96,104,120,.3)}
+
+/* MODAL */
+.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:200;display:none;align-items:center;justify-content:center;padding:20px}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:28px;width:100%;max-width:520px;max-height:90vh;overflow-y:auto;position:relative}
+.modal-lg{max-width:720px}.modal-xl{max-width:960px}
+.modal-title{font-size:17px;font-weight:700;margin-bottom:20px;padding-right:32px}
+.modal-close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer;padding:4px;line-height:1;transition:color .15s}
+.modal-close:hover{color:var(--text0)}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
+
+/* FORM */
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--text2);margin-bottom:6px;font-family:var(--mono)}
+.form-group input,.form-group select,.form-group textarea{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:9px 12px;color:var(--text0);font-family:var(--mono);font-size:13px;outline:none;transition:border-color .2s}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--accent)}
+.form-hint{font-size:11px;color:var(--text2);margin-top:4px;font-family:var(--mono)}
+
+/* SEARCH */
+.search-bar{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:8px 12px;margin-bottom:16px}
+.search-bar input{flex:1;background:none;border:none;color:var(--text0);font-family:var(--mono);font-size:13px;outline:none}
+.search-bar input::placeholder{color:var(--text2)}
+
+/* FILE MANAGER */
+.fm-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.fm-breadcrumb{display:flex;align-items:center;gap:4px;flex:1;font-family:var(--mono);font-size:12px;color:var(--text2);flex-wrap:wrap}
+.fm-breadcrumb span{cursor:pointer}.fm-breadcrumb span:hover{color:var(--accent)}
+.fm-breadcrumb .sep{color:var(--border2)}
+.fm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.fm-list{display:flex;flex-direction:column;gap:1px}
+.fm-item-grid{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:12px 10px;cursor:pointer;transition:all .15s;text-align:center}
+.fm-item-grid:hover{border-color:var(--accent);background:var(--bg3)}
+.fm-item-grid .fi-icon{font-size:28px;margin-bottom:6px}
+.fm-item-grid .fi-name{font-size:11px;font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text1)}
+.fm-item-grid .fi-size{font-size:10px;color:var(--text2);margin-top:2px}
+.fm-item-list{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg2);border:1px solid transparent;border-bottom-color:var(--border);cursor:pointer;transition:all .15s}
+.fm-item-list:first-child{border-radius:var(--r) var(--r) 0 0;border-top-color:var(--border)}
+.fm-item-list:last-child{border-radius:0 0 var(--r) var(--r)}
+.fm-item-list:hover{background:var(--bg3);border-color:var(--border)}
+.fm-item-list .fi-icon{font-size:18px;flex-shrink:0;width:24px;text-align:center}
+.fm-item-list .fi-name{flex:1;font-family:var(--mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fm-item-list .fi-size{font-size:11px;color:var(--text2);font-family:var(--mono);flex-shrink:0;min-width:70px;text-align:right}
+.fm-item-list .fi-date{font-size:11px;color:var(--text2);font-family:var(--mono);flex-shrink:0}
+.fm-item-list .fi-actions{display:flex;gap:4px;opacity:0;transition:opacity .15s;flex-shrink:0}
+.fm-item-list:hover .fi-actions{opacity:1}
+
+/* UPLOAD */
+.upload-zone{border:2px dashed var(--border2);border-radius:var(--r2);padding:32px;text-align:center;color:var(--text2);cursor:pointer;transition:all .2s;margin-bottom:16px}
+.upload-zone:hover,.upload-zone.dragover{border-color:var(--accent);background:rgba(79,142,247,.05);color:var(--text1)}
+.upload-zone .uz-icon{font-size:32px;margin-bottom:8px}
+.upload-zone .uz-text{font-size:13px}
+.upload-zone .uz-hint{font-size:11px;font-family:var(--mono);margin-top:4px}
+
+/* PREVIEW */
+.preview-container{max-height:70vh;overflow:auto;border-radius:var(--r);background:var(--bg3)}
+.preview-container img{max-width:100%;display:block;margin:0 auto}
+.preview-container video{max-width:100%;display:block;margin:0 auto}
+.preview-container audio{width:100%;padding:16px}
+.preview-code{font-family:var(--mono);font-size:12px;line-height:1.6;padding:16px;white-space:pre;overflow-x:auto;color:var(--text0)}
+.preview-iframe{width:100%;height:60vh;border:none}
+
+/* PERMISSION MATRIX */
+.matrix-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--r2)}
+.matrix-table{border-collapse:collapse;min-width:100%}
+.matrix-table th,.matrix-table td{padding:8px 12px;border:1px solid var(--border);font-size:12px;white-space:nowrap}
+.matrix-table th{background:var(--bg3);font-family:var(--mono);font-size:11px;font-weight:600;color:var(--text2)}
+.access-cell{text-align:center;cursor:pointer;transition:background .15s;min-width:60px}
+.access-cell:hover{background:var(--bg3)}
+.acc-rw{color:var(--green)}.acc-r{color:var(--cyan)}.acc-w{color:var(--yellow)}.acc-none{color:var(--text2)}
+
+/* POLICY BUILDER */
+.policy-builder{display:flex;flex-direction:column;gap:10px}
+.policy-bucket-row{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--bg3);border-radius:var(--r);border:1px solid var(--border)}
+.policy-bucket-name{flex:1;font-family:var(--mono);font-size:13px}
+.access-toggles{display:flex;gap:6px}
+.acc-btn{padding:5px 12px;border-radius:4px;border:1px solid var(--border2);background:transparent;font-family:var(--mono);font-size:11px;font-weight:600;cursor:pointer;transition:all .15s;color:var(--text2)}
+.acc-btn:hover{border-color:var(--text1);color:var(--text0)}
+.acc-btn.sel-none{background:rgba(96,104,120,.15);border-color:var(--text2);color:var(--text2)}
+.acc-btn.sel-r{background:rgba(34,211,238,.15);border-color:var(--cyan);color:var(--cyan)}
+.acc-btn.sel-w{background:rgba(247,201,72,.15);border-color:var(--yellow);color:var(--yellow)}
+.acc-btn.sel-rw{background:rgba(61,214,140,.15);border-color:var(--green);color:var(--green)}
+
+/* JSON EDITOR */
+.json-editor{width:100%;background:var(--bg0);border:1px solid var(--border);border-radius:var(--r);padding:12px;color:var(--text0);font-family:var(--mono);font-size:12px;line-height:1.6;outline:none;resize:vertical;min-height:300px;transition:border-color .2s}
+.json-editor:focus{border-color:var(--accent)}
+.json-err{margin-top:6px;font-size:11px;font-family:var(--mono);color:var(--red);min-height:16px}
+
+/* MISC */
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-row td{text-align:center;padding:32px;color:var(--text2)}
+.empty-state{text-align:center;padding:48px 24px;color:var(--text2)}
+.empty-state .es-icon{font-size:40px;margin-bottom:12px;opacity:.5}
+#toast-container{position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:12px 18px;border-radius:var(--r);font-size:13px;font-family:var(--mono);animation:slideIn .25s ease;pointer-events:all;max-width:320px}
+@keyframes slideIn{from{transform:translateX(120%);opacity:0}}
+.toast-success{background:rgba(61,214,140,.15);border:1px solid var(--green);color:var(--green)}
+.toast-error{background:rgba(247,87,79,.15);border:1px solid var(--red);color:var(--red)}
+.toast-info{background:rgba(79,142,247,.15);border:1px solid var(--accent);color:var(--accent)}
+.copy-pill{display:inline-flex;align-items:center;gap:6px;background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:4px 12px;font-family:var(--mono);font-size:12px;cursor:pointer;transition:all .15s;max-width:100%;overflow:hidden}
+.copy-pill:hover{border-color:var(--accent)}
+.copy-pill span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pwd-display{display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px}
+.pwd-display code{flex:1;font-family:var(--mono);font-size:13px;color:var(--green);word-break:break-all}
+.tag{display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;font-family:var(--mono);background:var(--bg4);border:1px solid var(--border2);color:var(--text1);margin:1px}
+.progress-bar{height:4px;background:var(--border);border-radius:2px;overflow:hidden;margin-top:8px}
+.progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width .3s}
+.view-toggle{display:flex;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.view-toggle button{padding:5px 10px;background:none;border:none;color:var(--text2);cursor:pointer;transition:all .15s;font-size:14px}
+.view-toggle button.active{background:var(--bg4);color:var(--text0)}
+
+/* BUCKET CARDS */
+.bucket-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.bucket-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:20px;cursor:pointer;transition:border-color .15s,background .15s,transform .1s;display:flex;flex-direction:column;gap:10px;position:relative;overflow:hidden}
+.bucket-card:hover{border-color:var(--accent);background:var(--bg3);transform:translateY(-1px)}
+.bucket-card-icon{font-size:28px;line-height:1;opacity:.85}
+.bucket-card-name{font-weight:700;font-size:14px;font-family:var(--mono);letter-spacing:-.3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bucket-card-date{font-size:11px;color:var(--text2);font-family:var(--mono)}
+.bucket-card-actions{display:flex;gap:6px;margin-top:auto;padding-top:10px;border-top:1px solid var(--border)}
+.bucket-card-new{border:2px dashed var(--border2);background:transparent;color:var(--text2);align-items:center;justify-content:center;flex-direction:column;gap:8px;min-height:140px}
+.bucket-card-new:hover{border-color:var(--accent);color:var(--accent);background:rgba(79,142,247,.05)}
+.bucket-card-new .plus{font-size:28px;line-height:1}
+.bucket-card-new .lbl{font-size:13px;font-weight:600}
+
+/* POLICY LIST TABS */
+.tab-bar{display:flex;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px}
+.tab{padding:8px 16px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text2);border-bottom:2px solid transparent;transition:all .15s;margin-bottom:-1px}
+.tab:hover{color:var(--text1)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+
+@media(max-width:768px){
+  #menu-toggle{display:block}
+  #sidebar{position:fixed;top:var(--topbar);bottom:0;left:0;z-index:150;transform:translateX(-100%);border-right:1px solid var(--border)}
+  #sidebar.open{transform:translateX(0)}
+  #sidebar-overlay{display:none;position:fixed;inset:0;top:var(--topbar);background:rgba(0,0,0,.5);z-index:140}
+  #sidebar-overlay.open{display:block}
+  .stat-grid{grid-template-columns:repeat(2,1fr)}
+  .page{padding:16px}
+  table{font-size:12px}
+  th,td{padding:8px 10px}
+  .access-toggles{flex-wrap:wrap}
+}
+
+/* Admin-only hiding */
+body.no-admin #page-users,
+body.no-admin #page-permissions,
+body.no-admin #page-policies { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">minio<span>dash</span></div>
+    <div class="login-sub" id="login-endpoint"><span data-i18n="login.connecting">connecting…</span></div>
+    <div class="login-field"><label data-i18n="login.accessKey">Access Key</label><input type="text" id="login-user" data-i18n-placeholder="login.accessKeyPlaceholder" autocomplete="username"></div>
+    <div class="login-field"><label data-i18n="login.secretKey">Secret Key</label><input type="password" id="login-pass" autocomplete="current-password" placeholder="••••••••••••"></div>
+    <button class="login-btn" id="login-btn" data-i18n="login.signIn">Sign in →</button>
+    <div class="login-err" id="login-err"></div>
+  </div>
+</div>
+
+<div id="app">
+  <div id="topbar">
+    <button id="menu-toggle" onclick="toggleSidebar()">☰</button>
+    <div class="topbar-logo">minio<span>dash</span></div>
+    <div class="topbar-endpoint" id="top-endpoint"></div>
+    <div class="topbar-spacer"></div>
+    <div class="topbar-user">
+      <div class="topbar-avatar" id="top-avatar">?</div>
+      <span id="top-username"></span>
+      <span class="topbar-badge" id="top-badge" style="display:none">admin</span>
+      <button id="lang-btn" onclick="I18N.toggle()" style="padding:5px 10px;background:transparent;border:1px solid var(--border2);border-radius:var(--r);color:var(--text2);font-size:12px;cursor:pointer;margin-right:4px">🇵🇱 PL</button><button id="btn-logout" onclick="logout()" data-i18n="topbar.logout">Logout</button>
+    </div>
+  </div>
+  <div id="body">
+    <div id="sidebar-overlay" onclick="toggleSidebar()"></div>
+    <nav id="sidebar">
+      <div class="nav-section" data-i18n="nav.overview">Overview</div>
+      <div class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')" data-i18n-nav="nav.dashboard"><span class="icon">⬡</span> Dashboard</div>
+      <div id="admin-nav" style="display:none">
+        <div class="nav-section" data-i18n="nav.admin">Admin</div>
+        <div class="nav-item" data-page="users" onclick="navigate('users')" data-i18n-nav="nav.users"><span class="icon">👥</span> Users</div>
+        <div class="nav-item" data-page="permissions" onclick="navigate('permissions')" data-i18n-nav="nav.permissions"><span class="icon">🔐</span> Permissions</div>
+        <div class="nav-item" data-page="policies" onclick="navigate('policies')" data-i18n-nav="nav.policies"><span class="icon">📜</span> Policies</div>
+      </div>
+      <div class="nav-section" data-i18n="nav.storage">Storage</div>
+      <div class="nav-item" data-page="buckets" onclick="navigate('buckets')" data-i18n-nav="nav.allBuckets"><span class="icon">🗄</span> All Buckets</div>
+      <div id="bucket-nav"></div>
+      <div class="sidebar-bottom">
+        <div class="sidebar-endpoint" id="sidebar-endpoint"></div>
+        <div class="sidebar-footer">
+          <a href="https://git.racis.dev/marceliracis/minio-dash" target="_blank" rel="noopener">minio-dash</a> by <a href="https://racis.dev" target="_blank" rel="noopener">Marceli Racis</a>
+        </div>
+      </div>
+    </nav>
+    <main id="main">
+
+      <!-- DASHBOARD -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-header">
+          <div><div class="page-title" data-i18n="dashboard.title">Dashboard</div><div class="page-sub" id="dash-user-line">loading…</div></div>
+        </div>
+        <div class="stat-grid" id="stat-cards"></div>
+        <div id="dash-buckets-section">
+          <div class="page-header" style="margin-bottom:12px">
+            <div class="page-title" style="font-size:16px" data-i18n="dashboard.yourBuckets">Your Buckets</div>
+            <div class="page-actions" id="dash-create-bucket-btn" style="display:none">
+              <button class="btn btn-primary btn-sm" onclick="openCreateBucket()" data-i18n="dashboard.newBucket">＋ New Bucket</button>
+            </div>
+          </div>
+          <div id="dash-buckets-grid"></div>
+        </div>
+      </div>
+
+      <!-- USERS -->
+      <div class="page" id="page-users">
+        <div class="page-header">
+          <div><div class="page-title" data-i18n="users.title">Users</div><div class="page-sub" data-i18n="users.sub">manage access keys and policies</div></div>
+          <div class="page-actions"><button class="btn btn-primary" onclick="openCreateUser()" data-i18n="users.newUser">+ New User</button></div>
+        </div>
+        <div class="search-bar"><span>🔍</span><input type="text" data-i18n-placeholder="users.searchPlaceholder" placeholder="Search users…" oninput="filterUsers(this.value)"></div>
+        <div class="table-wrap">
+          <table><thead><tr><th data-i18n="users.colAccessKey">Access Key</th><th data-i18n="users.colStatus">Status</th><th data-i18n="users.colPolicies">Policies</th><th data-i18n="users.colActions">Actions</th></tr></thead>
+          <tbody id="users-body"></tbody></table>
+        </div>
+      </div>
+
+      <!-- PERMISSIONS MATRIX -->
+      <div class="page" id="page-permissions">
+        <div class="page-header">
+          <div><div class="page-title" data-i18n="permissions.title">Permission Matrix</div><div class="page-sub" data-i18n="permissions.sub">click any cell or Edit to change access</div></div>
+          <div class="page-actions"><button class="btn btn-ghost btn-sm" onclick="loadMatrix()" data-i18n="permissions.refresh">↺ Refresh</button></div>
+        </div>
+        <div id="matrix-container"><div class="empty-state"><div class="spinner"></div></div></div>
+      </div>
+
+      <!-- POLICIES -->
+      <div class="page" id="page-policies">
+        <div class="page-header">
+          <div><div class="page-title" data-i18n="policies.title">Policies</div><div class="page-sub" data-i18n="policies.sub">IAM canned policies</div></div>
+          <div class="page-actions"><button class="btn btn-primary" onclick="openCreatePolicy()" data-i18n="policies.newPolicy">+ New Policy</button></div>
+        </div>
+        <div class="table-wrap">
+          <table><thead><tr><th data-i18n="policies.colName">Policy Name</th><th data-i18n="policies.colType">Type</th><th data-i18n="policies.colActions">Actions</th></tr></thead>
+          <tbody id="policies-body"></tbody></table>
+        </div>
+      </div>
+
+      <!-- BUCKETS LIST -->
+      <div class="page" id="page-buckets">
+        <div class="page-header">
+          <div><div class="page-title" data-i18n="buckets.title">Buckets</div><div class="page-sub" data-i18n="buckets.sub">all accessible buckets</div></div>
+          <div class="page-actions" id="create-bucket-btn-wrap">
+            <button class="btn btn-primary" onclick="openCreateBucket()" data-i18n="buckets.newBucket">＋ New Bucket</button>
+          </div>
+        </div>
+        <div id="buckets-grid"></div>
+      </div>
+
+      <!-- FILE MANAGER -->
+      <div class="page" id="page-files">
+        <div class="page-header">
+          <div><div class="page-title" id="fm-bucket-title">Files</div><div class="page-sub" id="fm-bucket-sub"></div></div>
+          <div class="page-actions">
+            <button class="btn btn-ghost btn-sm" onclick="openUpload()" data-i18n="files.upload">↑ Upload</button>
+            <button class="btn btn-ghost btn-sm" onclick="openMkdir()" data-i18n="files.newFolder">+ Folder</button>
+            <div class="view-toggle">
+              <button id="view-grid-btn" onclick="setView('grid')" title="Grid">⊞</button>
+              <button id="view-list-btn" onclick="setView('list')" class="active" title="List">☰</button>
+            </div>
+          </div>
+        </div>
+        <div class="fm-toolbar"><div class="fm-breadcrumb" id="fm-breadcrumb"></div></div>
+        <div id="fm-items"></div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<!-- ═══ MODALS ═══ -->
+
+<!-- Bucket Access Editor -->
+<div class="modal-backdrop" id="modal-bucket-access">
+  <div class="modal modal-lg">
+    <button class="modal-close" onclick="closeModal('modal-bucket-access')">✕</button>
+    <div class="modal-title">Bucket Access — <span id="ba-username"></span></div>
+
+    <div class="tab-bar">
+      <div class="tab active" id="tab-visual" onclick="switchAccessTab('visual')" data-i18n="modals.bucketAccess.tabVisual">Visual</div>
+      <div class="tab" id="tab-json" onclick="switchAccessTab('json')" data-i18n="modals.bucketAccess.tabJson">JSON Policy</div>
+    </div>
+
+    <!-- Visual tab -->
+    <div id="ba-visual">
+      <p style="font-size:12px;color:var(--text2);margin-bottom:14px"><span data-i18n="modals.bucketAccess.visualHint">Kliknij poziom dostępu dla każdego bucketa. Zapisanie nadpisze wszystkie poprzednie polityki usera.</span></p>
+      <div class="policy-builder" id="ba-builder"></div>
+    </div>
+
+    <!-- JSON tab -->
+    <div id="ba-json" style="display:none">
+      <p style="font-size:12px;color:var(--text2);margin-bottom:10px"><span data-i18n="modals.bucketAccess.jsonHint">Edytuj surowy JSON polityki. Zostanie zapisany jako</span> <code style="font-family:var(--mono);color:var(--accent)">user-<span id="ba-json-username"></span>-custom</code>.</p>
+      <textarea class="json-editor" id="ba-json-editor" spellcheck="false"></textarea>
+      <div class="json-err" id="ba-json-err"></div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-bucket-access')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-primary" id="ba-save-btn" onclick="saveBucketAccess()" data-i18n="modals.bucketAccess.saveAccess">Save Access</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create User -->
+<div class="modal-backdrop" id="modal-create-user">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-create-user')">✕</button>
+    <div class="modal-title" data-i18n="modals.createUser.title">Create User</div>
+    <div class="form-group"><label data-i18n="modals.createUser.labelUsername">Access Key (username)</label><input type="text" id="cu-username" data-i18n-placeholder="modals.createUser.usernamePlaceholder" placeholder="alice"></div>
+    <div class="form-group"><label data-i18n="modals.createUser.labelPassword">Password <span style="color:var(--text2);font-weight:400" data-i18n="modals.createUser.passwordHint">(blank = auto)</span></label><input type="text" id="cu-password" data-i18n-placeholder="modals.createUser.passwordPlaceholder" placeholder="auto-generated if empty"></div>
+    <div class="form-group"><label data-i18n="modals.createUser.labelPolicies">Initial Policies</label><div id="cu-policies-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-create-user')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="createUser()" data-i18n="modals.createUser.submit">Create User</button>
+    </div>
+  </div>
+</div>
+
+<!-- Created User result -->
+<div class="modal-backdrop" id="modal-user-created">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-user-created')">✕</button>
+    <div class="modal-title" data-i18n="modals.userCreated.title">✅ User Created</div>
+    <p style="color:var(--text1);margin-bottom:16px;font-size:13px"><span data-i18n="modals.userCreated.hint">Zapisz hasło — nie zostanie pokazane ponownie.</span></p>
+    <div class="form-group"><label data-i18n="modals.userCreated.labelAccessKey">Access Key</label><div class="pwd-display"><code id="uc-username"></code></div></div>
+    <div class="form-group"><label data-i18n="modals.userCreated.labelSecretKey">Secret Key</label><div class="pwd-display"><code id="uc-password"></code><button class="btn-icon" onclick="copyText(document.getElementById('uc-password').textContent)">⎘</button></div></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="closeModal('modal-user-created')" data-i18n="modals.done">Done</button></div>
+  </div>
+</div>
+
+<!-- Edit Policies -->
+<div class="modal-backdrop" id="modal-edit-policies">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-edit-policies')">✕</button>
+    <div class="modal-title">Policies — <span id="ep-username"></span></div>
+    <div id="ep-policies-list" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-edit-policies')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="saveUserPolicies()" data-i18n="modals.editPolicies.save">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reset Password -->
+<div class="modal-backdrop" id="modal-reset-pwd">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-reset-pwd')">✕</button>
+    <div class="modal-title" data-i18n="modals.resetPwd.title">🔑 New Password</div>
+    <p style="color:var(--text1);margin-bottom:16px;font-size:13px"><span data-i18n="modals.resetPwd.hint">Hasło zostało zresetowane. Zapisz je teraz.</span></p>
+    <div class="pwd-display"><code id="rp-password"></code><button class="btn-icon" onclick="copyText(document.getElementById('rp-password').textContent)">⎘</button></div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="closeModal('modal-reset-pwd')" data-i18n="modals.done">Done</button></div>
+  </div>
+</div>
+
+<!-- Create Bucket -->
+<div class="modal-backdrop" id="modal-create-bucket">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-create-bucket')">✕</button>
+    <div class="modal-title" data-i18n="modals.createBucket.title">Create Bucket</div>
+    <div class="form-group"><label data-i18n="modals.createBucket.labelName">Bucket Name</label><input type="text" id="cb-name" data-i18n-placeholder="modals.createBucket.namePlaceholder" placeholder="my-bucket"><div class="form-hint" data-i18n="modals.createBucket.nameHint">lowercase, numbers, hyphens</div></div>
+    <div class="form-group"><label data-i18n="modals.createBucket.labelRegion">Region (optional)</label><input type="text" id="cb-region" data-i18n-placeholder="modals.createBucket.regionPlaceholder" placeholder="us-east-1"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-create-bucket')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="createBucket()" data-i18n="modals.createBucket.submit">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Create/Edit Policy JSON -->
+<div class="modal-backdrop" id="modal-create-policy">
+  <div class="modal modal-lg">
+    <button class="modal-close" onclick="closeModal('modal-create-policy')">✕</button>
+    <div class="modal-title" id="cp-modal-title">Create Policy</div>
+    <div class="form-group"><label data-i18n="modals.createPolicy.labelName">Policy Name</label><input type="text" id="cp-name" data-i18n-placeholder="modals.createPolicy.namePlaceholder" placeholder="photos-readonly"></div>
+    <div class="form-group">
+      <label data-i18n="modals.createPolicy.labelJson">JSON Document</label>
+      <textarea class="json-editor" id="cp-json" spellcheck="false" style="min-height:260px"></textarea>
+      <div class="json-err" id="cp-json-err"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-create-policy')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="createPolicy()" data-i18n="modals.createPolicy.submit">Save Policy</button>
+    </div>
+  </div>
+</div>
+
+<!-- Upload -->
+<div class="modal-backdrop" id="modal-upload">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-upload')">✕</button>
+    <div class="modal-title" data-i18n="modals.upload.title">Upload Files</div>
+    <div class="upload-zone" id="upload-zone"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleDrop(event)"
+         onclick="document.getElementById('file-input').click()">
+      <div class="uz-icon">📁</div>
+      <div class="uz-text" data-i18n="modals.upload.dropHint">Drop files or click to browse</div>
+      <div class="uz-hint" data-i18n="modals.upload.multipleHint">Multiple files supported</div>
+    </div>
+    <input type="file" id="file-input" multiple style="display:none" onchange="handleFileSelect(event)">
+    <div id="upload-progress"></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-upload')" data-i18n="modals.close">Close</button></div>
+  </div>
+</div>
+
+<!-- Rename -->
+<div class="modal-backdrop" id="modal-rename">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-rename')">✕</button>
+    <div class="modal-title" data-i18n="modals.rename.title">Rename</div>
+    <div class="form-group"><label data-i18n="modals.rename.labelNewName">New Name</label><input type="text" id="rename-input"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-rename')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="doRename()" data-i18n="modals.rename.submit">Rename</button>
+    </div>
+  </div>
+</div>
+
+<!-- Mkdir -->
+<div class="modal-backdrop" id="modal-mkdir">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-mkdir')">✕</button>
+    <div class="modal-title" data-i18n="modals.mkdir.title">New Folder</div>
+    <div class="form-group"><label data-i18n="modals.mkdir.labelName">Folder Name</label><input type="text" id="mkdir-input"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-mkdir')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-primary" onclick="doMkdir()" data-i18n="modals.mkdir.submit">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- Share -->
+<div class="modal-backdrop" id="modal-share">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-share')">✕</button>
+    <div class="modal-title" data-i18n="modals.share.title">Share Link</div>
+    <div class="form-group"><label data-i18n="modals.share.labelExpire">Expire (hours)</label><input type="number" id="share-expire" value="168" min="1" max="8760"></div>
+    <div id="share-result" style="display:none">
+      <div class="form-group"><label data-i18n="modals.share.labelUrl">Presigned URL</label>
+        <div class="copy-pill" onclick="copyText(document.getElementById('share-url').textContent)">
+          <span id="share-url"></span><span>⎘</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-share')" data-i18n="modals.close">Close</button>
+      <button class="btn btn-primary" onclick="doShare()" data-i18n="modals.share.generate">Generate Link</button>
+    </div>
+  </div>
+</div>
+
+<!-- Preview -->
+<div class="modal-backdrop" id="modal-preview">
+  <div class="modal modal-xl" style="max-width:90vw">
+    <button class="modal-close" onclick="closePreview()">✕</button>
+    <div class="modal-title" id="preview-title" style="padding-right:40px"></div>
+    <div class="preview-container" id="preview-container"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" id="preview-dl-btn" data-i18n="modals.preview.download">↓ Download</button>
+      <button class="btn btn-ghost" onclick="closePreview()" data-i18n="modals.close">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Confirm -->
+<div class="modal-backdrop" id="confirm-modal">
+  <div class="modal" style="max-width:380px">
+    <div class="modal-title" id="confirm-title">Confirm</div>
+    <p style="color:var(--text1);margin-bottom:6px" id="confirm-text"></p>
+    <p style="font-size:12px;color:var(--text2);font-family:var(--mono)" id="confirm-sub"></p>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('confirm-modal')" data-i18n="modals.cancel">Cancel</button>
+      <button class="btn btn-danger" id="confirm-ok-btn" data-i18n="modals.confirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+// ═══════ STATE ═══════
+const S = {
+  token: localStorage.getItem('token') || '',
+  user: null, isAdmin: false, endpoint: '',
+  buckets: [], currentBucket: null, currentPrefix: '',
+  fileView: localStorage.getItem('fileView') || 'list',
+  allPolicies: [],
+  // bucket access editor
+  baUser: null, baMap: {}, baBuckets: [], baTab: 'visual',
+  baCurrentJson: null,
+  // misc
+  editPoliciesUser: null, renameKey: null, shareKey: null,
+};
+
+
+const BUNDLED_I18N = {"en": {"login": {"connecting": "connecting…", "accessKey": "Access Key", "secretKey": "Secret Key", "accessKeyPlaceholder": "your access key", "signIn": "Sign in →", "signingIn": "Signing in…", "errorEmpty": "Enter access key and secret key", "errorFailed": "Login failed"}, "nav": {"overview": "Overview", "dashboard": "Dashboard", "admin": "Admin", "users": "Users", "permissions": "Permissions", "policies": "Policies", "storage": "Storage", "allBuckets": "All Buckets"}, "topbar": {"admin": "admin", "logout": "Logout"}, "dashboard": {"title": "Dashboard", "loading": "loading…", "yourBuckets": "Your Buckets", "newBucket": "＋ New Bucket", "noBuckets": "No buckets", "loggedInAs": "Logged in as"}, "stats": {"buckets": "Buckets", "activeUsers": "Active Users", "disabled": "Disabled", "storageUsed": "Storage Used"}, "users": {"title": "Users", "sub": "manage access keys and policies", "newUser": "+ New User", "searchPlaceholder": "Search users…", "colAccessKey": "Access Key", "colStatus": "Status", "colPolicies": "Policies", "colActions": "Actions", "noUsers": "No users", "btnAccess": "Access", "btnPolicies": "Policies", "btnResetPwd": "Reset pwd", "btnDisable": "Disable", "btnEnable": "Enable", "btnDelete": "Delete", "errorEmpty": "Enter username", "created": "User created", "deleted": "User \"{name}\" deleted", "toggled": "User {action}d", "confirmDelete": "Delete user \"{name}\"?", "confirmDeleteSub": "This cannot be undone."}, "permissions": {"title": "Permission Matrix", "sub": "click any cell or Edit to change access", "refresh": "↺ Refresh"}, "policies": {"title": "Policies", "sub": "IAM canned policies", "newPolicy": "+ New Policy", "colName": "Policy Name", "colType": "Type", "colActions": "Actions", "btnEdit": "Edit", "btnDelete": "Delete", "builtIn": "built-in", "custom": "custom", "errorEmpty": "Enter policy name", "errorJson": "Invalid JSON: {msg}", "saved": "Policy \"{name}\" saved", "deleted": "Policy deleted", "confirmDelete": "Delete policy \"{name}\"?", "confirmDeleteSub": "Users assigned this policy will lose access.", "adminRequired": "Admin required"}, "buckets": {"title": "Buckets", "sub": "all accessible buckets", "newBucket": "＋ New Bucket", "browse": "📂 Browse", "unknownDate": "unknown date", "errorEmpty": "Enter bucket name", "created": "Bucket \"{name}\" created", "deleted": "Bucket \"{name}\" deleted", "confirmDelete": "Delete bucket \"{name}\"?", "confirmDeleteSub": "All files will be permanently deleted.", "noBucketsAccessible": "No buckets accessible"}, "files": {"title": "Files", "upload": "↑ Upload", "newFolder": "+ Folder", "browseFiles": "browse files", "folderCreated": "Folder created", "deleted": "Deleted", "downloadFailed": "Download failed: {msg}", "confirmDelete": "Delete \"{name}\"?", "confirmDeleteFileSub": "This cannot be undone.", "confirmDeleteDirSub": "All contents will be deleted.", "previewUnavailable": "Preview unavailable for .{ext}", "download": "↓ Download", "htmlPreviewQ": "HTML file — how do you want to view it?", "htmlPreview": "Preview", "htmlSource": "View source", "emptyFolder": "Empty folder", "noData": "No data"}, "modals": {"cancel": "Cancel", "save": "Save", "close": "Close", "confirm": "Confirm", "done": "Done", "create": "Create", "rename": {"title": "Rename", "labelNewName": "New Name", "submit": "Rename"}, "bucketAccess": {"title": "Bucket Access", "tabVisual": "Visual", "tabJson": "JSON Policy", "visualHint": "Click access level for each bucket. Saving will overwrite all previous user policies.", "jsonHint": "Edit raw policy JSON. Will be saved as", "saveAccess": "Save Access", "saving": "Saving…", "saved": "Access saved", "savedWarnings": "Saved with warnings: {msg}", "policySaved": "Policy saved", "accessNone": "✕ none", "accessR": "→ read", "accessW": "← write", "accessRW": "⇄ rw"}, "createUser": {"title": "Create User", "labelUsername": "Access Key (username)", "labelPassword": "Password", "passwordHint": "(blank = auto)", "labelPolicies": "Initial Policies", "usernamePlaceholder": "alice", "passwordPlaceholder": "auto-generated if empty", "submit": "Create User"}, "userCreated": {"title": "✅ User Created", "hint": "Save the password — it won't be shown again.", "labelAccessKey": "Access Key", "labelSecretKey": "Secret Key"}, "editPolicies": {"title": "Policies", "save": "Save", "saved": "Policies updated"}, "resetPwd": {"title": "🔑 New Password", "hint": "Password has been reset. Save it now."}, "createBucket": {"title": "Create Bucket", "labelName": "Bucket Name", "namePlaceholder": "my-bucket", "nameHint": "lowercase, numbers, hyphens", "labelRegion": "Region (optional)", "regionPlaceholder": "us-east-1", "submit": "Create"}, "createPolicy": {"titleCreate": "Create Policy", "titleEdit": "Edit Policy", "labelName": "Policy Name", "namePlaceholder": "photos-readonly", "labelJson": "JSON Document", "submit": "Save Policy"}, "upload": {"title": "Upload Files", "dropHint": "Drop files or click to browse", "multipleHint": "Multiple files supported"}, "mkdir": {"title": "New Folder", "labelName": "Folder Name", "submit": "Create"}, "share": {"title": "Share Link", "labelExpire": "Expire (hours)", "labelUrl": "Presigned URL", "generate": "Generate Link"}, "preview": {"download": "↓ Download"}}, "toast": {"copied": "Copied!"}}, "pl": {"login": {"connecting": "łączenie…", "accessKey": "Klucz dostępu", "secretKey": "Klucz tajny", "accessKeyPlaceholder": "twój klucz dostępu", "signIn": "Zaloguj →", "signingIn": "Logowanie…", "errorEmpty": "Podaj klucz dostępu i klucz tajny", "errorFailed": "Błąd logowania"}, "nav": {"overview": "Przegląd", "dashboard": "Panel", "admin": "Admin", "users": "Użytkownicy", "permissions": "Uprawnienia", "policies": "Polityki", "storage": "Magazyn", "allBuckets": "Wszystkie buckety"}, "topbar": {"admin": "admin", "logout": "Wyloguj"}, "dashboard": {"title": "Panel", "loading": "ładowanie…", "yourBuckets": "Twoje buckety", "newBucket": "＋ Nowy bucket", "noBuckets": "Brak bucketów", "loggedInAs": "Zalogowany jako"}, "stats": {"buckets": "Buckety", "activeUsers": "Aktywni użytkownicy", "disabled": "Wyłączeni", "storageUsed": "Zajęte miejsce"}, "users": {"title": "Użytkownicy", "sub": "zarządzaj kluczami dostępu i politykami", "newUser": "+ Nowy użytkownik", "searchPlaceholder": "Szukaj użytkowników…", "colAccessKey": "Klucz dostępu", "colStatus": "Status", "colPolicies": "Polityki", "colActions": "Akcje", "noUsers": "Brak użytkowników", "btnAccess": "Dostęp", "btnPolicies": "Polityki", "btnResetPwd": "Reset hasła", "btnDisable": "Wyłącz", "btnEnable": "Włącz", "btnDelete": "Usuń", "errorEmpty": "Podaj nazwę użytkownika", "created": "Użytkownik utworzony", "deleted": "Użytkownik \"{name}\" usunięty", "toggled": "Użytkownik {action}", "confirmDelete": "Usunąć użytkownika \"{name}\"?", "confirmDeleteSub": "Tej operacji nie można cofnąć."}, "permissions": {"title": "Macierz uprawnień", "sub": "kliknij komórkę lub Edytuj aby zmienić dostęp", "refresh": "↺ Odśwież"}, "policies": {"title": "Polityki", "sub": "wbudowane polityki IAM", "newPolicy": "+ Nowa polityka", "colName": "Nazwa polityki", "colType": "Typ", "colActions": "Akcje", "btnEdit": "Edytuj", "btnDelete": "Usuń", "builtIn": "wbudowana", "custom": "własna", "errorEmpty": "Podaj nazwę polityki", "errorJson": "Nieprawidłowy JSON: {msg}", "saved": "Polityka \"{name}\" zapisana", "deleted": "Polityka usunięta", "confirmDelete": "Usunąć politykę \"{name}\"?", "confirmDeleteSub": "Użytkownicy z tą polityką stracą dostęp.", "adminRequired": "Wymagane uprawnienia admina"}, "buckets": {"title": "Buckety", "sub": "wszystkie dostępne buckety", "newBucket": "＋ Nowy bucket", "browse": "📂 Przeglądaj", "unknownDate": "nieznana data", "errorEmpty": "Podaj nazwę bucketa", "created": "Bucket \"{name}\" utworzony", "deleted": "Bucket \"{name}\" usunięty", "confirmDelete": "Usunąć bucket \"{name}\"?", "confirmDeleteSub": "Wszystkie pliki zostaną trwale usunięte.", "noBucketsAccessible": "Brak dostępnych bucketów"}, "files": {"title": "Pliki", "upload": "↑ Wyślij", "newFolder": "+ Folder", "browseFiles": "przeglądaj pliki", "folderCreated": "Folder utworzony", "deleted": "Usunięto", "downloadFailed": "Błąd pobierania: {msg}", "confirmDelete": "Usunąć \"{name}\"?", "confirmDeleteFileSub": "Tej operacji nie można cofnąć.", "confirmDeleteDirSub": "Cała zawartość zostanie usunięta.", "previewUnavailable": "Podgląd niedostępny dla .{ext}", "download": "↓ Pobierz", "htmlPreviewQ": "Plik HTML — jak chcesz go zobaczyć?", "htmlPreview": "Podgląd", "htmlSource": "Kod źródłowy", "emptyFolder": "Pusty folder", "noData": "Brak danych"}, "modals": {"cancel": "Anuluj", "save": "Zapisz", "close": "Zamknij", "confirm": "Potwierdź", "done": "Gotowe", "create": "Utwórz", "rename": {"title": "Zmień nazwę", "labelNewName": "Nowa nazwa", "submit": "Zmień nazwę"}, "bucketAccess": {"title": "Dostęp do bucketów", "tabVisual": "Wizualny", "tabJson": "Polityka JSON", "visualHint": "Kliknij poziom dostępu dla każdego bucketa. Zapisanie nadpisze wszystkie poprzednie polityki użytkownika.", "jsonHint": "Edytuj surowy JSON polityki. Zostanie zapisany jako", "saveAccess": "Zapisz dostęp", "saving": "Zapisywanie…", "saved": "Dostęp zapisany", "savedWarnings": "Zapisano z ostrzeżeniami: {msg}", "policySaved": "Polityka zapisana", "accessNone": "✕ brak", "accessR": "→ odczyt", "accessW": "← zapis", "accessRW": "⇄ pełny"}, "createUser": {"title": "Utwórz użytkownika", "labelUsername": "Klucz dostępu (nazwa)", "labelPassword": "Hasło", "passwordHint": "(puste = auto)", "labelPolicies": "Początkowe polityki", "usernamePlaceholder": "alice", "passwordPlaceholder": "auto-generowane jeśli puste", "submit": "Utwórz użytkownika"}, "userCreated": {"title": "✅ Użytkownik utworzony", "hint": "Zapisz hasło — nie zostanie pokazane ponownie.", "labelAccessKey": "Klucz dostępu", "labelSecretKey": "Klucz tajny"}, "editPolicies": {"title": "Polityki", "save": "Zapisz", "saved": "Polityki zaktualizowane"}, "resetPwd": {"title": "🔑 Nowe hasło", "hint": "Hasło zostało zresetowane. Zapisz je teraz."}, "createBucket": {"title": "Utwórz bucket", "labelName": "Nazwa bucketa", "namePlaceholder": "moj-bucket", "nameHint": "małe litery, cyfry, myślniki", "labelRegion": "Region (opcjonalnie)", "regionPlaceholder": "us-east-1", "submit": "Utwórz"}, "createPolicy": {"titleCreate": "Utwórz politykę", "titleEdit": "Edytuj politykę", "labelName": "Nazwa polityki", "namePlaceholder": "zdjecia-tylko-odczyt", "labelJson": "Dokument JSON", "submit": "Zapisz politykę"}, "upload": {"title": "Wyślij pliki", "dropHint": "Upuść pliki lub kliknij aby wybrać", "multipleHint": "Obsługiwane wiele plików"}, "mkdir": {"title": "Nowy folder", "labelName": "Nazwa folderu", "submit": "Utwórz"}, "share": {"title": "Udostępnij link", "labelExpire": "Wygasa (godziny)", "labelUrl": "Podpisany URL", "generate": "Generuj link"}, "preview": {"download": "↓ Pobierz"}}, "toast": {"copied": "Skopiowano!"}}};
+
+// ═══════ I18N ═══════
+const I18N = {
+  lang: localStorage.getItem('lang') || (navigator.language.startsWith('pl') ? 'pl' : 'en'),
+  data: {},
+  async load(lang) {
+    // Try server first, fall back to bundled translations
+    try {
+      const r = await fetch(`/i18n/${lang}`);
+      this.data = r.ok ? await r.json() : BUNDLED_I18N[lang] || BUNDLED_I18N['en'];
+    } catch(_) {
+      this.data = BUNDLED_I18N[lang] || BUNDLED_I18N['en'];
+    }
+    this.lang = lang;
+    localStorage.setItem('lang', lang);
+    this.apply();
+  },
+  get(key, vars={}) {
+    const parts = key.split('.');
+    let v = this.data;
+    for (const p of parts) { v = v?.[p]; if (v === undefined) return key; }
+    if (typeof v !== 'string') return key;
+    return v.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
+  },
+  apply() {
+    document.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.getAttribute('data-i18n');
+      el.textContent = this.get(key);
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      el.placeholder = this.get(el.getAttribute('data-i18n-placeholder'));
+    });
+    document.querySelectorAll('[data-i18n-nav]').forEach(el => {
+      const key = el.getAttribute('data-i18n-nav');
+      const icon = el.querySelector('.icon');
+      el.childNodes.forEach(n => { if (n.nodeType === 3) n.remove(); });
+      el.append(' ' + this.get(key));
+    });
+    document.title = 'minio-dash';
+    // lang switcher button
+    const btn = document.getElementById('lang-btn');
+    if (btn) btn.textContent = this.lang === 'pl' ? '🇬🇧 EN' : '🇵🇱 PL';
+  },
+  toggle() {
+    this.load(this.lang === 'pl' ? 'en' : 'pl');
+  }
+};
+function t(key, vars) { return I18N.get(key, vars); }
+
+// ═══════ API ═══════
+async function api(method, path, body, raw=false) {
+  const opts = { method, headers: { 'Authorization': `Bearer ${S.token}` } };
+  if (body && !(body instanceof FormData)) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  } else if (body instanceof FormData) {
+    opts.body = body;
+  }
+  const r = await fetch('/api' + path, opts);
+  if (r.status === 401) { logout(true); throw new Error(t('login.errorFailed')); }
+  if (raw) return r;
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || 'Request failed');
+  return j;
+}
+const GET  = p     => api('GET', p);
+const POST = (p,b) => api('POST', p, b);
+const PUT  = (p,b) => api('PUT', p, b);
+const DEL  = (p,b) => api('DELETE', p, b);
+
+// ═══════ AUTH ═══════
+async function initEndpoint() {
+  const ep = window.location.host;
+  S.endpoint = ep;
+  ['login-endpoint','top-endpoint','sidebar-endpoint'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = ep;
+  });
+}
+
+async function tryAutoLogin() {
+  if (!S.token) return false;
+  try {
+    const me = await GET('/me');
+    S.user = me.username; S.isAdmin = me.admin;
+    return true;
+  } catch { S.token = ''; localStorage.removeItem('token'); return false; }
+}
+
+document.getElementById('login-btn').addEventListener('click', doLogin);
+document.getElementById('login-pass').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+document.getElementById('login-user').addEventListener('keydown', e => { if(e.key==='Enter') document.getElementById('login-pass').focus(); });
+
+async function doLogin() {
+  const user = document.getElementById('login-user').value.trim();
+  const pass = document.getElementById('login-pass').value;
+  const errEl = document.getElementById('login-err');
+  const btn   = document.getElementById('login-btn');
+  if (!user || !pass) { showLoginErr(t('login.errorEmpty')); return; }
+  btn.textContent = t('login.signingIn'); btn.disabled = true; errEl.style.display = 'none';
+  try {
+    const r = await fetch('/api/login', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({username:user, password:pass}),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Login failed');
+    S.token = j.token; S.user = j.username; S.isAdmin = j.admin;
+    localStorage.setItem('token', S.token);
+    showApp();
+  } catch(e) { showLoginErr(e.message); }
+  finally { btn.textContent = t('login.signIn'); btn.disabled = false; }
+}
+
+function showLoginErr(msg) {
+  const el = document.getElementById('login-err');
+  el.textContent = msg; el.style.display = 'block';
+}
+
+async function logout(silent=false) {
+  if (!silent) { try { await POST('/logout'); } catch {} }
+  S.token = ''; S.user = null;
+  localStorage.removeItem('token');
+  document.getElementById('app').classList.remove('visible');
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+// ═══════ APP INIT ═══════
+async function showApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').classList.add('visible');
+  document.getElementById('top-username').textContent = S.user;
+  document.getElementById('top-avatar').textContent = S.user.slice(0,2).toUpperCase();
+  const isAdmin = S.isAdmin === true;
+  if (isAdmin) {
+    document.getElementById('top-badge').style.display = 'inline';
+    document.getElementById('admin-nav').style.display = 'block';
+    document.getElementById('create-bucket-btn-wrap').style.display = 'block';
+    document.getElementById('dash-create-bucket-btn').style.display = 'block';
+  } else {
+    document.getElementById('top-badge').style.display = 'none';
+    document.getElementById('admin-nav').style.display = 'none';
+    document.getElementById('create-bucket-btn-wrap').style.display = 'none';
+    document.getElementById('dash-create-bucket-btn').style.display = 'none';
+    document.body.classList.add('no-admin');
+  }
+  await Promise.all([loadStats(), loadBuckets()]);
+  navigate('dashboard');
+  loadPolicies();
+}
+
+// ═══════ NAVIGATION ═══════
+const ADMIN_PAGES = ['users', 'permissions', 'policies'];
+function navigate(page, bucket=null) {
+  if (ADMIN_PAGES.includes(page) && S.isAdmin !== true) { navigate('dashboard'); return; }
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const pageEl = document.getElementById('page-'+page);
+  if (pageEl) pageEl.classList.add('active');
+  const navEl = document.querySelector(`[data-page="${page}"]`);
+  if (navEl) navEl.classList.add('active');
+  closeSidebar();
+  if (page==='files' && bucket) {
+    S.currentBucket = bucket; S.currentPrefix = '';
+    document.getElementById('fm-bucket-title').textContent = '🗄 '+bucket;
+    document.getElementById('fm-bucket-sub').textContent = t('files.browseFiles');
+    loadFiles();
+  }
+  if (page==='users') loadUsers();
+  if (page==='policies') loadPoliciesList();
+  if (page==='permissions') loadMatrix();
+  if (page==='buckets') renderBucketsPage();
+  if (page==='dashboard') loadDashboard();
+  history.replaceState(null,'',`#${page}${bucket?'/'+bucket:''}`);
+}
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebar-overlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar-overlay').classList.remove('open');
+}
+
+// ═══════ DASHBOARD ═══════
+async function loadStats() {
+  try {
+    const s = await GET('/stats');
+    const fmt = b => b>1e9?(b/1e9).toFixed(1)+'GB':b>1e6?(b/1e6).toFixed(1)+'MB':b>1e3?(b/1e3).toFixed(1)+'KB':b+'B';
+    let html = `<div class="stat-card"><div class="stat-label">${t('stats.buckets')}</div><div class="stat-value blue">${s.buckets}</div></div>`;
+    if (S.isAdmin) {
+      html += `<div class="stat-card"><div class="stat-label">${t('stats.activeUsers')}</div><div class="stat-value green">${s.active}</div></div>`;
+      html += `<div class="stat-card"><div class="stat-label">${t('stats.disabled')}</div><div class="stat-value red">${s.disabled}</div></div>`;
+      if (s.usedBytes>0) html += `<div class="stat-card"><div class="stat-label">${t('stats.storageUsed')}</div><div class="stat-value yellow">${fmt(s.usedBytes)}</div></div>`;
+    }
+    document.getElementById('stat-cards').innerHTML = html;
+  } catch(e) { console.warn('stats',e); }
+}
+
+async function loadDashboard() {
+  loadStats();
+  document.getElementById('dash-user-line').textContent = `${t('dashboard.loggedInAs')} ${S.user}${S.isAdmin?' · '+t('topbar.admin'):''}`;
+  const grid = document.getElementById('dash-buckets-grid');
+  grid.innerHTML = '<div class="empty-state"><div class="spinner"></div></div>';
+  try {
+    const buckets = await GET('/buckets');
+    S.buckets = buckets; renderSidebarBuckets();
+    if (!buckets.length) { grid.innerHTML=`<div class="empty-state"><div class="es-icon">🗄</div><div class="es-text">${t('dashboard.noBuckets')}</div></div>`; return; }
+    let html = buckets.map(b => bucketCardHTML(b)).join('');
+    if (S.isAdmin) html += `<div class="bucket-card bucket-card-new" onclick="openCreateBucket()"><div class="plus">＋</div><div class="lbl">${t('dashboard.newBucket')}</div></div>`;
+    grid.innerHTML = `<div class="bucket-grid">${html}</div>`;
+  } catch(e) { grid.innerHTML=`<p style="color:var(--red)">${esc(e.message)}</p>`; }
+}
+
+function bucketCardHTML(b) {
+  return `<div class="bucket-card" onclick="navigate('files','${esc(b.name)}')">
+    <div class="bucket-card-icon">🗄</div>
+    <div class="bucket-card-name" title="${esc(b.name)}">${esc(b.name)}</div>
+    <div class="bucket-card-date">${fmtDate(b.creationDate)||t('buckets.unknownDate')}</div>
+    <div class="bucket-card-actions" onclick="event.stopPropagation()">
+      <button class="btn btn-ghost btn-sm" onclick="navigate('files','${esc(b.name)}')">${t('buckets.browse')}</button>
+      ${S.isAdmin?`<button class="btn btn-danger btn-sm" onclick="confirmDeleteBucket('${esc(b.name)}')">🗑</button>`:''}
+    </div>
+  </div>`;
+}
+
+// ═══════ BUCKETS ═══════
+async function loadBuckets() {
+  try { S.buckets = await GET('/buckets'); renderSidebarBuckets(); } catch(e) { console.warn('buckets',e); }
+}
+function renderSidebarBuckets() {
+  document.getElementById('bucket-nav').innerHTML = S.buckets.map(b =>
+    `<div class="nav-item nav-bucket" data-page="files-${b.name}" onclick="navigate('files','${esc(b.name)}')"><span class="icon">◦</span> ${esc(b.name)}</div>`
+  ).join('');
+}
+function renderBucketsPage() {
+  const grid = document.getElementById('buckets-grid');
+  let html = S.buckets.map(b => bucketCardHTML(b)).join('');
+  if (S.isAdmin) html += `<div class="bucket-card bucket-card-new" onclick="openCreateBucket()"><div class="plus">＋</div><div class="lbl">New Bucket</div></div>`;
+  if (!S.buckets.length && !S.isAdmin) html=`<div class="empty-state"><div class="es-icon">🗄</div><div class="es-text">No buckets accessible</div></div>`;
+  grid.innerHTML = `<div class="bucket-grid">${html}</div>`;
+}
+function openCreateBucket() {
+  document.getElementById('cb-name').value=''; document.getElementById('cb-region').value='';
+  openModal('modal-create-bucket');
+}
+async function createBucket() {
+  const name=document.getElementById('cb-name').value.trim();
+  const region=document.getElementById('cb-region').value.trim();
+  if (!name) return toast(t('buckets.errorEmpty'),'error');
+  try {
+    await POST('/buckets',{name,region:region||undefined});
+    toast(t('buckets.created',{name}),'success'); closeModal('modal-create-bucket');
+    await loadBuckets(); renderBucketsPage();
+  } catch(e) { toast(e.message,'error'); }
+}
+function confirmDeleteBucket(name) {
+  confirm2(t('buckets.confirmDelete',{name}),t('buckets.confirmDeleteSub'), async()=>{
+    try { await DEL(`/buckets/${name}`,{force:true}); toast(t('buckets.deleted',{name}),'success'); await loadBuckets(); navigate('buckets'); }
+    catch(e) { toast(e.message,'error'); }
+  });
+}
+
+// ═══════ USERS ═══════
+let _allUsers=[];
+async function loadUsers() {
+  const tbody=document.getElementById('users-body');
+  tbody.innerHTML=`<tr class="loading-row"><td colspan="4"><span class="spinner"></span></td></tr>`;
+  try { _allUsers=await GET('/users'); renderUsersTable(_allUsers); }
+  catch(e) { tbody.innerHTML=`<tr><td colspan="4" style="color:var(--red)">${esc(e.message)}</td></tr>`; }
+}
+function renderUsersTable(users) {
+  const tbody=document.getElementById('users-body');
+  if (!users.length) { tbody.innerHTML=`<tr><td colspan="4"><div class="empty-state"><div class="es-icon">👥</div><div class="es-text">${t('users.noUsers')}</div></div></td></tr>`; return; }
+  tbody.innerHTML=users.map(u=>`
+    <tr onclick="openBucketAccess('${esc(u.username)}')">
+      <td><strong style="font-family:var(--mono)">${esc(u.username)}</strong></td>
+      <td><span class="badge ${u.status==='enabled'?'badge-green':'badge-red'}">${u.status}</span></td>
+      <td>${(u.policies||[]).filter(p=>p).map(p=>`<span class="tag">${esc(p)}</span>`).join('')||'<span style="color:var(--text2)">—</span>'}</td>
+      <td onclick="event.stopPropagation()">
+        <div style="display:flex;gap:5px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="openBucketAccess('${esc(u.username)}')">${t('users.btnAccess')}</button>
+          <button class="btn btn-ghost btn-sm" onclick="openEditPolicies('${esc(u.username)}')">${t('users.btnPolicies')}</button>
+          <button class="btn btn-ghost btn-sm" onclick="doResetPwd('${esc(u.username)}')">${t('users.btnResetPwd')}</button>
+          ${u.status==='enabled'
+            ?`<button class="btn btn-ghost btn-sm" onclick="toggleUser('${esc(u.username)}','disable')">${t('users.btnDisable')}</button>`
+            :`<button class="btn btn-success btn-sm" onclick="toggleUser('${esc(u.username)}','enable')">${t('users.btnEnable')}</button>`}
+          ${u.username!==S.user?`<button class="btn btn-danger btn-sm" onclick="confirmDeleteUser('${esc(u.username)}')">${t('users.btnDelete')}</button>`:''}
+        </div>
+      </td>
+    </tr>`).join('');
+}
+function filterUsers(q) { renderUsersTable(_allUsers.filter(u=>u.username.toLowerCase().includes(q.toLowerCase()))); }
+
+async function openCreateUser() {
+  document.getElementById('cu-username').value=''; document.getElementById('cu-password').value='';
+  document.getElementById('cu-policies-list').innerHTML=S.allPolicies.map(p=>`
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--mono);font-size:12px">
+      <input type="checkbox" name="cu-pol" value="${esc(p)}" ${p==='readwrite'?'checked':''}> ${esc(p)}
+    </label>`).join('');
+  openModal('modal-create-user');
+}
+async function createUser() {
+  const username=document.getElementById('cu-username').value.trim();
+  const password=document.getElementById('cu-password').value.trim()||undefined;
+  const policies=[...document.querySelectorAll('input[name="cu-pol"]:checked')].map(c=>c.value);
+  if (!username) return toast(t('users.errorEmpty'),'error');
+  try {
+    const r=await POST('/users',{username,password,policies});
+    closeModal('modal-create-user');
+    document.getElementById('uc-username').textContent=r.username;
+    document.getElementById('uc-password').textContent=r.password;
+    openModal('modal-user-created'); loadUsers();
+  } catch(e) { toast(e.message,'error'); }
+}
+async function confirmDeleteUser(username) {
+  confirm2(t('users.confirmDelete',{name:username}),t('users.confirmDeleteSub'), async()=>{
+    try { await DEL(`/users/${username}`); toast(t('users.deleted',{name:username}),'success'); loadUsers(); }
+    catch(e) { toast(e.message,'error'); }
+  });
+}
+async function toggleUser(username,action) {
+  try { await POST(`/users/${username}/${action}`); toast(`User ${action}d`,'success'); loadUsers(); }
+  catch(e) { toast(e.message,'error'); }
+}
+async function doResetPwd(username) {
+  try { const r=await POST(`/users/${username}/reset-password`); document.getElementById('rp-password').textContent=r.password; openModal('modal-reset-pwd'); }
+  catch(e) { toast(e.message,'error'); }
+}
+async function openEditPolicies(username) {
+  S.editPoliciesUser=username;
+  document.getElementById('ep-username').textContent=username;
+  const current=await GET(`/users/${username}/policies`).catch(()=>[]);
+  document.getElementById('ep-policies-list').innerHTML=S.allPolicies.map(p=>`
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-family:var(--mono);font-size:12px">
+      <input type="checkbox" name="ep-pol" value="${esc(p)}" ${current.includes(p)?'checked':''}> ${esc(p)}
+    </label>`).join('');
+  openModal('modal-edit-policies');
+}
+async function saveUserPolicies() {
+  const policies=[...document.querySelectorAll('input[name="ep-pol"]:checked')].map(c=>c.value);
+  try { await PUT(`/users/${S.editPoliciesUser}/policies`,{policies}); toast(t('modals.editPolicies.saved'),'success'); closeModal('modal-edit-policies'); loadUsers(); }
+  catch(e) { toast(e.message,'error'); }
+}
+
+// ═══════ BUCKET ACCESS EDITOR ═══════
+async function openBucketAccess(username) {
+  S.baUser = username;
+  S.baMap  = {};
+  S.baTab  = 'visual';
+  document.getElementById('ba-username').textContent = username;
+
+  // Reset tabs
+  switchAccessTab('visual');
+
+  const builder = document.getElementById('ba-builder');
+  builder.innerHTML = '<div class="spinner"></div>';
+  openModal('modal-bucket-access');
+
+  try {
+    // Fetch matrix to get current access
+    const matrix = await GET('/permission-matrix');
+    S.baBuckets  = matrix.buckets || S.buckets.map(b=>b.name);
+    const userRow = matrix.matrix?.[username] || {};
+
+    S.baBuckets.forEach(b => {
+      S.baMap[b] = userRow[b] || 'none';
+    });
+
+    renderBucketAccessBuilder();
+
+    // Load current JSON policy for JSON tab
+    const policyName = `user-${username}-custom`;
+    try {
+      const pol = await GET(`/policies/${policyName}`);
+      S.baCurrentJson = pol;
+      document.getElementById('ba-json-editor').value = JSON.stringify(pol, null, 2);
+    } catch {
+      // No existing policy - generate from visual state
+      S.baCurrentJson = null;
+      document.getElementById('ba-json-editor').value = JSON.stringify(buildPolicyFromMap(S.baMap, S.baBuckets), null, 2);
+    }
+
+  } catch(e) {
+    builder.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`;
+  }
+}
+
+function renderBucketAccessBuilder() {
+  const builder = document.getElementById('ba-builder');
+  const levels = ['none','r','w','rw'];
+  const labels = {none:t('modals.bucketAccess.accessNone'), r:t('modals.bucketAccess.accessR'), w:t('modals.bucketAccess.accessW'), rw:t('modals.bucketAccess.accessRW')};
+
+  builder.innerHTML = S.baBuckets.map(b => {
+    const cur = S.baMap[b] || 'none';
+    const btns = levels.map(lvl => `
+      <button class="acc-btn ${cur===lvl?'sel-'+lvl:''}"
+        data-bucket="${esc(b)}" data-level="${lvl}"
+        onclick="setAccess('${esc(b)}','${lvl}',this)">
+        ${labels[lvl]}
+      </button>`).join('');
+    return `<div class="policy-bucket-row">
+      <div class="policy-bucket-name">🗄 ${esc(b)}</div>
+      <div class="access-toggles">${btns}</div>
+    </div>`;
+  }).join('');
+}
+
+function setAccess(bucket, level, btn) {
+  S.baMap[bucket] = level;
+  const row = btn.closest('.policy-bucket-row');
+  row.querySelectorAll('.acc-btn').forEach(b => {
+    b.className = 'acc-btn' + (b.dataset.level === level ? ' sel-'+level : '');
+  });
+  // Sync JSON tab
+  document.getElementById('ba-json-editor').value = JSON.stringify(buildPolicyFromMap(S.baMap, S.baBuckets), null, 2);
+  document.getElementById('ba-json-err').textContent = '';
+}
+
+function switchAccessTab(tab) {
+  S.baTab = tab;
+  document.getElementById('ba-visual').style.display = tab==='visual' ? 'block' : 'none';
+  document.getElementById('ba-json').style.display   = tab==='json'   ? 'block' : 'none';
+  document.getElementById('tab-visual').classList.toggle('active', tab==='visual');
+  document.getElementById('tab-json').classList.toggle('active', tab==='json');
+
+  if (tab === 'json') {
+    // Sync JSON from visual state
+    document.getElementById('ba-json-editor').value = JSON.stringify(buildPolicyFromMap(S.baMap, S.baBuckets), null, 2);
+  }
+}
+
+function buildPolicyFromMap(map, buckets) {
+  const statements = [];
+  for (const [bucket, level] of Object.entries(map)) {
+    if (level === 'none') continue;
+    const arnObj = `arn:aws:s3:::${bucket}/*`;
+    const arnBkt = `arn:aws:s3:::${bucket}`;
+    if (level === 'r' || level === 'rw') {
+      statements.push({
+        Effect: 'Allow',
+        Action: ['s3:GetObject','s3:GetObjectVersion','s3:ListBucket','s3:GetBucketLocation'],
+        Resource: [arnBkt, arnObj],
+      });
+    }
+    if (level === 'w' || level === 'rw') {
+      statements.push({
+        Effect: 'Allow',
+        Action: ['s3:PutObject','s3:DeleteObject','s3:AbortMultipartUpload','s3:ListMultipartUploadParts'],
+        Resource: [arnObj],
+      });
+    }
+  }
+  return { Version: '2012-10-17', Statement: statements };
+}
+
+async function saveBucketAccess() {
+  const btn = document.getElementById('ba-save-btn');
+  btn.disabled = true; btn.textContent = t('modals.bucketAccess.saving');
+
+  try {
+    if (S.baTab === 'json') {
+      // Save raw JSON policy
+      const raw = document.getElementById('ba-json-editor').value;
+      let policy;
+      try { policy = JSON.parse(raw); }
+      catch(e) {
+        document.getElementById('ba-json-err').textContent = 'Invalid JSON: ' + e.message;
+        btn.disabled=false; btn.textContent=t('modals.bucketAccess.saveAccess'); return;
+      }
+      document.getElementById('ba-json-err').textContent = '';
+
+      // Create/update policy then assign to user
+      const policyName = `user-${S.baUser}-custom`;
+      await POST('/policies', { name: policyName, policy });
+      // Assign via bucket-access endpoint with empty access map (just to trigger policy assignment)
+      // Actually easier: just set user policies directly
+      await PUT(`/users/${S.baUser}/policies`, { policies: [policyName] });
+      toast(t('modals.bucketAccess.policySaved'),'success');
+    } else {
+      // Save from visual map
+      const r = await PUT(`/users/${S.baUser}/bucket-access`, { access: S.baMap });
+      if (r.warnings && r.warnings.length) {
+        toast(t('modals.bucketAccess.savedWarnings',{msg:r.warnings.join(', ')}),'info');
+      } else {
+        toast(t('modals.bucketAccess.saved'),'success');
+      }
+    }
+
+    closeModal('modal-bucket-access');
+    // Refresh matrix and users
+    if (document.getElementById('page-permissions').classList.contains('active')) loadMatrix();
+    if (document.getElementById('page-users').classList.contains('active')) loadUsers();
+
+  } catch(e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled=false; btn.textContent='Save Access';
+  }
+}
+
+// ═══════ PERMISSION MATRIX ═══════
+async function loadMatrix() {
+  const cont=document.getElementById('matrix-container');
+  cont.innerHTML='<div class="empty-state"><div class="spinner"></div></div>';
+  try { const d=await GET('/permission-matrix'); renderMatrix(d); }
+  catch(e) { cont.innerHTML=`<p style="color:var(--red)">${esc(e.message)}</p>`; }
+}
+
+function renderMatrix(d) {
+  const {users,buckets,matrix}=d;
+  const cont=document.getElementById('matrix-container');
+  if (!users.length||!buckets.length) {
+    cont.innerHTML='<div class="empty-state"><div class="es-icon">🔐</div><div class="es-text">No data</div></div>'; return;
+  }
+  const accIcon={
+    rw:`<span class="acc-rw" title="Read+Write">⇄</span>`,
+    r: `<span class="acc-r"  title="Read only">→</span>`,
+    w: `<span class="acc-w"  title="Write only">←</span>`,
+    none:`<span class="acc-none" title="No access">✕</span>`,
+  };
+  let html=`<div class="matrix-wrap"><table class="matrix-table"><thead><tr>
+    <th>User</th>
+    ${buckets.map(b=>`<th title="${esc(b)}">🗄 ${esc(b)}</th>`).join('')}
+    <th>Edit</th>
+  </tr></thead><tbody>`;
+  users.forEach(u=>{
+    html+=`<tr>
+      <td style="font-family:var(--mono);font-size:12px">${esc(u)}</td>
+      ${buckets.map(b=>{
+        const a=matrix[u]?.[b]||'none';
+        return `<td class="access-cell" onclick="openBucketAccess('${esc(u)}')" title="Click to edit">${accIcon[a]||accIcon.none}</td>`;
+      }).join('')}
+      <td><button class="btn btn-ghost btn-sm" onclick="openBucketAccess('${esc(u)}')">Edit</button></td>
+    </tr>`;
+  });
+  html+=`</tbody></table></div>
+  <div style="margin-top:12px;display:flex;gap:16px;font-size:12px;color:var(--text2)">
+    <span><span class="acc-rw">⇄</span> read+write</span>
+    <span><span class="acc-r">→</span> read only</span>
+    <span><span class="acc-w">←</span> write only</span>
+    <span><span class="acc-none">✕</span> no access</span>
+  </div>`;
+  cont.innerHTML=html;
+}
+
+// ═══════ POLICIES ═══════
+async function loadPolicies() {
+  try { S.allPolicies=await GET('/policies'); }
+  catch { S.allPolicies=['readwrite','readonly','writeonly','diagnostics']; }
+}
+
+async function loadPoliciesList() {
+  const tbody=document.getElementById('policies-body');
+  tbody.innerHTML=`<tr class="loading-row"><td colspan="3"><span class="spinner"></span></td></tr>`;
+  try {
+    const list=await GET('/policies');
+    S.allPolicies=list;
+    const builtIn=['readwrite','readonly','writeonly','diagnostics','consoleAdmin'];
+    tbody.innerHTML=list.map(p=>`
+      <tr>
+        <td><strong style="font-family:var(--mono)">${esc(p)}</strong></td>
+        <td>${builtIn.includes(p)?`<span class="badge badge-blue">${t("policies.builtIn")}</span>`:`<span class="badge badge-gray">${t("policies.custom")}</span>`}</td>
+        <td>
+          <div style="display:flex;gap:6px">
+            <button class="btn btn-ghost btn-sm" onclick="editPolicy('${esc(p)}')">${t("policies.btnEdit")}</button>
+            ${!builtIn.includes(p)?`<button class="btn btn-danger btn-sm" onclick="confirmDeletePolicy('${esc(p)}')">${t("users.btnDelete")}</button>`:''}
+          </div>
+        </td>
+      </tr>`).join('');
+  } catch(e) { tbody.innerHTML=`<tr><td colspan="3" style="color:var(--red)">${esc(e.message)}</td></tr>`; }
+}
+
+function openCreatePolicy() {
+  document.getElementById('cp-modal-title').textContent=t('modals.createPolicy.titleCreate');
+  document.getElementById('cp-name').value='';
+  document.getElementById('cp-name').disabled=false;
+  document.getElementById('cp-json').value=JSON.stringify({
+    Version:"2012-10-17",
+    Statement:[{Effect:"Allow",Action:["s3:GetObject","s3:ListBucket"],Resource:["arn:aws:s3:::BUCKET-NAME","arn:aws:s3:::BUCKET-NAME/*"]}]
+  },null,2);
+  document.getElementById('cp-json-err').textContent='';
+  openModal('modal-create-policy');
+}
+
+async function editPolicy(name) {
+  document.getElementById('cp-modal-title').textContent=t('modals.createPolicy.titleEdit')+': '+name;
+  document.getElementById('cp-name').value=name;
+  document.getElementById('cp-name').disabled=true;
+  document.getElementById('cp-json-err').textContent='';
+  document.getElementById('cp-json').value='Loading…';
+  openModal('modal-create-policy');
+  try {
+    const pol=await GET(`/policies/${name}`);
+    document.getElementById('cp-json').value=JSON.stringify(pol,null,2);
+  } catch(e) {
+    document.getElementById('cp-json').value='';
+    document.getElementById('cp-json-err').textContent='Failed to load: '+e.message;
+  }
+}
+
+async function createPolicy() {
+  const name=document.getElementById('cp-name').value.trim();
+  const jsonStr=document.getElementById('cp-json').value;
+  const errEl=document.getElementById('cp-json-err');
+  errEl.textContent='';
+  if (!name) return toast(t('policies.errorEmpty'),'error');
+  let policy;
+  try { policy=JSON.parse(jsonStr); } catch(e) { errEl.textContent=t('policies.errorJson',{msg:e.message}); return; }
+  try {
+    await POST('/policies',{name,policy});
+    toast(t('policies.saved',{name}),'success'); closeModal('modal-create-policy');
+    loadPoliciesList(); loadPolicies();
+  } catch(e) { toast(e.message,'error'); }
+}
+
+async function confirmDeletePolicy(name) {
+  confirm2(t('policies.confirmDelete',{name}),t('policies.confirmDeleteSub'), async()=>{
+    try { await DEL(`/policies/${name}`); toast(t('policies.deleted'),'success'); loadPoliciesList(); }
+    catch(e) { toast(e.message,'error'); }
+  });
+}
+
+// ═══════ FILE MANAGER ═══════
+async function loadFiles() {
+  const cont=document.getElementById('fm-items');
+  cont.innerHTML=`<div class="empty-state"><div class="spinner"></div></div>`;
+  renderBreadcrumb();
+  try {
+    const items=await GET(`/buckets/${encodeURIComponent(S.currentBucket)}/files?prefix=${encodeURIComponent(S.currentPrefix)}`);
+    renderFiles(items);
+  } catch(e) { cont.innerHTML=`<div class="empty-state"><div class="es-icon">⚠</div><div class="es-text">${esc(e.message)}</div></div>`; }
+}
+
+function renderFiles(items) {
+  const cont=document.getElementById('fm-items');
+  items = items.filter(f => f.name !== '.keep' && !f.name.endsWith('/.keep'));
+  if (!items.length) { cont.innerHTML=`<div class="empty-state"><div class="es-icon">📂</div><div class="es-text">${t("files.emptyFolder")}</div></div>`; return; }
+  items.sort((a,b)=>{
+    if (a.isDir&&!b.isDir) return -1; if (!a.isDir&&b.isDir) return 1;
+    return a.name.localeCompare(b.name);
+  });
+  if (S.fileView==='grid') {
+    cont.innerHTML=`<div class="fm-grid">${items.map(fileItemGrid).join('')}</div>`;
+  } else {
+    cont.innerHTML=`<div class="fm-list">${items.map(fileItemList).join('')}</div>`;
+  }
+}
+
+function fileIcon(item) {
+  if (item.isDir) return '📁';
+  const ext=item.name.toLowerCase().split('.').pop();
+  const m={'jpg':'🖼','jpeg':'🖼','png':'🖼','gif':'🖼','webp':'🖼','svg':'🖼','bmp':'🖼','ico':'🖼',
+    'mp4':'🎬','avi':'🎬','mov':'🎬','mkv':'🎬','webm':'🎬','mp3':'🎵','wav':'🎵','flac':'🎵','ogg':'🎵','aac':'🎵',
+    'pdf':'📄','js':'📜','ts':'📜','jsx':'📜','tsx':'📜','html':'🌐','htm':'🌐','css':'🎨',
+    'json':'{}','yaml':'⚙','yml':'⚙','toml':'⚙','env':'⚙','ini':'⚙','conf':'⚙',
+    'txt':'📝','md':'📝','log':'📝','py':'🐍','go':'🐹','rs':'⚙','cpp':'⚙','c':'⚙',
+    'zip':'📦','tar':'📦','gz':'📦','rar':'📦','7z':'📦','sh':'💻','bat':'💻','csv':'📊','xlsx':'📊','docx':'📃'};
+  return m[ext]||'📄';
+}
+
+function fileItemGrid(item) {
+  const icon=fileIcon(item);
+  const key=item.fullKey||S.currentPrefix+item.name;
+  const click=item.isDir?`enterDir('${esc(item.name)}')`:`openPreview('${esc(key)}')`;
+  return `<div class="fm-item-grid" onclick="${click}">
+    <div class="fi-icon">${icon}</div>
+    <div class="fi-name" title="${esc(item.name)}">${esc(item.name)}</div>
+    <div class="fi-size">${item.isDir?'':fmtSize(item.size)}</div>
+  </div>`;
+}
+
+function fileItemList(item) {
+  const icon=fileIcon(item);
+  const key=item.fullKey||S.currentPrefix+item.name;
+  const click=item.isDir?`enterDir('${esc(item.name)}')`:`openPreview('${esc(key)}')`;
+  return `<div class="fm-item-list" onclick="${click}">
+    <div class="fi-icon">${icon}</div>
+    <div class="fi-name" title="${esc(item.name)}">${esc(item.name)}</div>
+    <div class="fi-date">${fmtDate(item.lastModified)}</div>
+    <div class="fi-size">${item.isDir?'':fmtSize(item.size)}</div>
+    <div class="fi-actions" onclick="event.stopPropagation()">
+      ${!item.isDir?`
+        <button class="btn-icon" title="Preview" onclick="openPreview('${esc(key)}')">👁</button>
+        <button class="btn-icon" title="Download" onclick="downloadFile('${esc(key)}')">↓</button>
+        <button class="btn-icon" title="Share" onclick="openShare('${esc(key)}')">🔗</button>`:''}
+      <button class="btn-icon" title="Rename" onclick="openRename('${esc(item.name)}','${esc(key)}',${item.isDir})">✎</button>
+      <button class="btn-icon" title="Delete" onclick="confirmDeleteFile('${esc(key)}',${item.isDir})" style="color:var(--red)">🗑</button>
+    </div>
+  </div>`;
+}
+
+function enterDir(name) { S.currentPrefix=S.currentPrefix+name+'/'; loadFiles(); }
+function renderBreadcrumb() {
+  const el=document.getElementById('fm-breadcrumb');
+  const parts=S.currentPrefix.split('/').filter(Boolean);
+  let html=`<span onclick="goRoot()" title="Bucket root">🗄 ${esc(S.currentBucket)}</span>`;
+  parts.forEach((part,i)=>{
+    const prefix=parts.slice(0,i+1).join('/')+'/';
+    html+=`<span class="sep">/</span><span onclick="goPrefix('${esc(prefix)}')">${esc(part)}</span>`;
+  });
+  el.innerHTML=html;
+}
+function goRoot() { S.currentPrefix=''; loadFiles(); }
+function goPrefix(prefix) { S.currentPrefix=prefix; loadFiles(); }
+function setView(v) {
+  S.fileView=v; localStorage.setItem('fileView',v);
+  document.getElementById('view-grid-btn').classList.toggle('active',v==='grid');
+  document.getElementById('view-list-btn').classList.toggle('active',v==='list');
+  loadFiles();
+}
+
+function openUpload() { openModal('modal-upload'); }
+function handleDrop(e) { e.preventDefault(); document.getElementById('upload-zone').classList.remove('dragover'); uploadFiles([...e.dataTransfer.files]); }
+function handleFileSelect(e) { uploadFiles([...e.target.files]); }
+
+async function uploadFiles(files) {
+  const prog=document.getElementById('upload-progress'); prog.innerHTML='';
+  for (const file of files) {
+    const row=document.createElement('div');
+    row.style.cssText='margin-bottom:8px;font-family:var(--mono);font-size:12px;';
+    row.textContent=file.name;
+    const bar=document.createElement('div'); bar.className='progress-bar';
+    bar.innerHTML='<div class="progress-fill" style="width:0%"></div>';
+    row.appendChild(bar); prog.appendChild(row);
+    const fd=new FormData(); fd.append('file',file);
+    try {
+      bar.firstChild.style.width='30%';
+      await api('POST',`/buckets/${encodeURIComponent(S.currentBucket)}/files/upload?prefix=${encodeURIComponent(S.currentPrefix)}`,fd);
+      bar.firstChild.style.width='100%'; bar.firstChild.style.background='var(--green)'; row.prepend('✓ ');
+    } catch(e) { bar.firstChild.style.background='var(--red)'; row.prepend('✗ '); toast(`Upload failed: ${file.name}`,'error'); }
+  }
+  loadFiles();
+}
+
+async function downloadFile(key) {
+  const url=`/api/buckets/${encodeURIComponent(S.currentBucket)}/files/download?key=${encodeURIComponent(key)}`;
+  const r=await fetch(url,{headers:{'Authorization':`Bearer ${S.token}`}});
+  if (!r.ok) { toast(t('files.downloadFailed',{msg:r.statusText}),'error'); return; }
+  const blob=await r.blob();
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=key.split('/').pop(); a.click(); URL.revokeObjectURL(a.href);
+}
+
+let _renameKey=null;
+function openRename(name,key,isDir) { _renameKey={key,isDir}; const inp=document.getElementById('rename-input'); inp.value=name; openModal('modal-rename'); setTimeout(()=>{inp.focus();inp.select();},100); }
+async function doRename() {
+  const newName=document.getElementById('rename-input').value.trim(); if (!newName) return;
+  const {key,isDir}=_renameKey;
+  const dir=key.lastIndexOf('/')>-1?key.slice(0,key.lastIndexOf('/')+1):'';
+  const dst=dir+newName+(isDir?'/':'');
+  try { await POST(`/buckets/${encodeURIComponent(S.currentBucket)}/files/rename`,{src:key,dst}); closeModal('modal-rename'); loadFiles(); toast('Renamed','success'); }
+  catch(e) { toast(e.message,'error'); }
+}
+
+function openMkdir() { document.getElementById('mkdir-input').value=''; openModal('modal-mkdir'); }
+async function doMkdir() {
+  const name=document.getElementById('mkdir-input').value.trim(); if (!name) return;
+  try { await POST(`/buckets/${encodeURIComponent(S.currentBucket)}/files/mkdir`,{prefix:S.currentPrefix,name}); closeModal('modal-mkdir'); loadFiles(); toast(t('files.folderCreated'),'success'); }
+  catch(e) { toast(e.message,'error'); }
+}
+
+function confirmDeleteFile(key,isDir) {
+  confirm2(t('files.confirmDelete',{name:key.split('/').filter(Boolean).pop()}), isDir?t('files.confirmDeleteDirSub'):t('files.confirmDeleteFileSub'), async()=>{
+    try { await POST(`/buckets/${encodeURIComponent(S.currentBucket)}/files/delete`,{key,recursive:isDir}); toast(t('files.deleted'),'success'); loadFiles(); }
+    catch(e) { toast(e.message,'error'); }
+  });
+}
+
+let _shareKey=null;
+function openShare(key) { _shareKey=key; document.getElementById('share-result').style.display='none'; document.getElementById('share-url').textContent=''; openModal('modal-share'); }
+async function doShare() {
+  const expire=parseInt(document.getElementById('share-expire').value)||168;
+  try { const r=await POST(`/buckets/${encodeURIComponent(S.currentBucket)}/files/share`,{key:_shareKey,expire}); document.getElementById('share-url').textContent=r.url; document.getElementById('share-result').style.display='block'; }
+  catch(e) { toast(e.message,'error'); }
+}
+
+async function openPreview(key) {
+  const name=key.split('/').pop(); const ext=name.split('.').pop().toLowerCase();
+  document.getElementById('preview-title').textContent=name;
+  document.getElementById('preview-container').innerHTML='<div class="empty-state"><div class="spinner"></div></div>';
+  openModal('modal-preview');
+  document.getElementById('preview-dl-btn').onclick=()=>downloadFile(key);
+  const viewUrl=`/api/buckets/${encodeURIComponent(S.currentBucket)}/files/view?key=${encodeURIComponent(key)}`;
+  const cont=document.getElementById('preview-container');
+  const imgExts=['jpg','jpeg','png','gif','webp','svg','bmp','ico','avif'];
+  const videoExts=['mp4','webm','mov','avi','mkv'];
+  const audioExts=['mp3','wav','flac','ogg','aac','m4a'];
+  const textExts=['txt','md','log','sh','bash','bat','py','rb','go','rs','c','cpp','h','java','kt','swift','env','yml','yaml','toml','ini','conf','xml','csv','js','ts','jsx','tsx','css','json','sql'];
+  try {
+    if (imgExts.includes(ext)) {
+      const blob=await fetchWithAuth(viewUrl); const url=URL.createObjectURL(blob);
+      cont.innerHTML=`<img src="${url}" style="max-width:100%;display:block;margin:0 auto" onload="URL.revokeObjectURL(this.src)">`;
+    } else if (videoExts.includes(ext)) {
+      const blob=await fetchWithAuth(viewUrl); const url=URL.createObjectURL(blob);
+      cont.innerHTML=`<video controls style="max-width:100%;width:100%" src="${url}"></video>`;
+    } else if (audioExts.includes(ext)) {
+      const blob=await fetchWithAuth(viewUrl); const url=URL.createObjectURL(blob);
+      cont.innerHTML=`<audio controls style="width:100%;padding:24px" src="${url}"></audio>`;
+    } else if (ext==='html'||ext==='htm') {
+      cont.innerHTML=`<div style="padding:24px;text-align:center">
+        <div style="font-size:32px;margin-bottom:16px">🌐</div>
+        <p style="color:var(--text1);margin-bottom:20px">${t('files.htmlPreviewQ')}</p>
+        <div style="display:flex;gap:12px;justify-content:center">
+          <button class="btn btn-primary" onclick="showHtmlIframe('${esc(viewUrl)}')">${t('files.htmlPreview')}</button>
+          <button class="btn btn-ghost" onclick="showTextPreviewCont('${esc(viewUrl)}')">${t('files.htmlSource')}</button>
+        </div></div>`;
+    } else if (textExts.includes(ext)) {
+      await showTextPreviewCont(viewUrl,cont);
+    } else if (ext==='pdf') {
+      const blob=await fetchWithAuth(viewUrl); const url=URL.createObjectURL(blob);
+      cont.innerHTML=`<iframe src="${url}" class="preview-iframe"></iframe>`;
+    } else {
+      cont.innerHTML=`<div style="padding:32px;text-align:center">
+        <div style="font-size:48px;margin-bottom:16px">📄</div>
+        <p style="color:var(--text1);margin-bottom:8px">${esc(name)}</p>
+        <p style="color:var(--text2);font-family:var(--mono);font-size:12px;margin-bottom:20px">${t('files.previewUnavailable',{ext})}</p>
+        <button class="btn btn-primary" onclick="downloadFile('${esc(key)}')">↓ Download</button></div>`;
+    }
+  } catch(e) { cont.innerHTML=`<div style="padding:24px;color:var(--red)">${esc(e.message)}</div>`; }
+}
+
+async function showHtmlIframe(url) {
+  const blob = await fetchWithAuth(url);
+  const blobUrl = URL.createObjectURL(blob);
+  document.getElementById('preview-container').innerHTML = `<iframe src="${blobUrl}" class="preview-iframe" sandbox="allow-scripts"></iframe>`;
+}
+
+async function showTextPreviewCont(url,cont) {
+  cont=cont||document.getElementById('preview-container');
+  const blob=await fetchWithAuth(url); const text=await blob.text();
+  const numbered=text.split('\n').map((l,i)=>`<span style="color:var(--text2);user-select:none;margin-right:12px;min-width:3em;display:inline-block;text-align:right">${i+1}</span>${escHtml(l)}`).join('\n');
+  cont.innerHTML=`<pre class="preview-code">${numbered}</pre>`;
+}
+
+async function fetchWithAuth(url) {
+  const r=await fetch(url,{headers:{'Authorization':`Bearer ${S.token}`}});
+  if (!r.ok) throw new Error(await r.text());
+  return r.blob();
+}
+
+function closePreview() {
+  closeModal('modal-preview');
+  const v=document.querySelector('#preview-container video,#preview-container audio');
+  if (v) { v.pause(); v.src=''; }
+}
+
+// ═══════ MODAL / CONFIRM / TOAST ═══════
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+document.addEventListener('keydown', e=>{
+  if (e.key==='Escape') {
+    document.querySelectorAll('.modal-backdrop.open').forEach(m=>{
+      if (m.id==='modal-preview') closePreview(); else m.classList.remove('open');
+    });
+  }
+});
+document.querySelectorAll('.modal-backdrop').forEach(backdrop=>{
+  backdrop.addEventListener('click',e=>{
+    if (e.target===backdrop) { if (backdrop.id==='modal-preview') closePreview(); else backdrop.classList.remove('open'); }
+  });
+});
+
+function confirm2(title,sub,cb) {
+  document.getElementById('confirm-title').textContent=title;
+  document.getElementById('confirm-text').textContent=title;
+  document.getElementById('confirm-sub').textContent=sub;
+  document.getElementById('confirm-ok-btn').onclick=()=>{ closeModal('confirm-modal'); cb(); };
+  openModal('confirm-modal');
+}
+
+function toast(msg,type='info') {
+  const c=document.getElementById('toast-container');
+  const el=document.createElement('div'); el.className=`toast toast-${type}`; el.textContent=msg;
+  c.appendChild(el); setTimeout(()=>el.remove(),3500);
+}
+
+// ═══════ UTILS ═══════
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtSize(bytes) { if (!bytes) return '0 B'; const s=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(bytes)/Math.log(1024)); return (bytes/Math.pow(1024,i)).toFixed(i?1:0)+' '+s[i]; }
+function fmtDate(d) { if (!d) return ''; try { return new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); } catch { return d; } }
+function copyText(text) { navigator.clipboard.writeText(text).then(()=>toast(t('toast.copied'),'success')); }
+
+// ═══════ BOOT ═══════
+(async()=>{
+  try { await I18N.load(I18N.lang); } catch(_) {
+    // Last-resort fallback: use bundled data directly
+    I18N.data = (BUNDLED_I18N && BUNDLED_I18N[I18N.lang]) || (BUNDLED_I18N && BUNDLED_I18N['en']) || {};
+    I18N.apply();
+  }
+  await initEndpoint();
+  const ok=await tryAutoLogin();
+  if (ok) showApp();
+  window.addEventListener('hashchange',()=>{
+    const hash=location.hash.slice(1); if (!hash) return;
+    const [page,...rest]=hash.split('/'); const bucket=rest.join('/');
+    if (S.user) navigate(page,bucket||null);
+  });
+})();
+</script>
+</body>
+</html>
