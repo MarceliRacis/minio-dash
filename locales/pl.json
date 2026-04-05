@@ -1,0 +1,212 @@
+{
+  "login": {
+    "connecting": "łączenie…",
+    "accessKey": "Klucz dostępu",
+    "secretKey": "Klucz tajny",
+    "accessKeyPlaceholder": "twój klucz dostępu",
+    "signIn": "Zaloguj →",
+    "signingIn": "Logowanie…",
+    "errorEmpty": "Podaj klucz dostępu i klucz tajny",
+    "errorFailed": "Błąd logowania"
+  },
+  "nav": {
+    "overview": "Przegląd",
+    "dashboard": "Panel",
+    "admin": "Admin",
+    "users": "Użytkownicy",
+    "permissions": "Uprawnienia",
+    "policies": "Polityki",
+    "storage": "Magazyn",
+    "allBuckets": "Wszystkie buckety"
+  },
+  "topbar": {
+    "admin": "admin",
+    "logout": "Wyloguj"
+  },
+  "dashboard": {
+    "title": "Panel",
+    "loading": "ładowanie…",
+    "yourBuckets": "Twoje buckety",
+    "newBucket": "＋ Nowy bucket",
+    "noBuckets": "Brak bucketów",
+    "loggedInAs": "Zalogowany jako"
+  },
+  "stats": {
+    "buckets": "Buckety",
+    "activeUsers": "Aktywni użytkownicy",
+    "disabled": "Wyłączeni",
+    "storageUsed": "Zajęte miejsce"
+  },
+  "users": {
+    "title": "Użytkownicy",
+    "sub": "zarządzaj kluczami dostępu i politykami",
+    "newUser": "+ Nowy użytkownik",
+    "searchPlaceholder": "Szukaj użytkowników…",
+    "colAccessKey": "Klucz dostępu",
+    "colStatus": "Status",
+    "colPolicies": "Polityki",
+    "colActions": "Akcje",
+    "noUsers": "Brak użytkowników",
+    "btnAccess": "Dostęp",
+    "btnPolicies": "Polityki",
+    "btnResetPwd": "Reset hasła",
+    "btnDisable": "Wyłącz",
+    "btnEnable": "Włącz",
+    "btnDelete": "Usuń",
+    "errorEmpty": "Podaj nazwę użytkownika",
+    "created": "Użytkownik utworzony",
+    "deleted": "Użytkownik \"{name}\" usunięty",
+    "toggled": "Użytkownik {action}",
+    "confirmDelete": "Usunąć użytkownika \"{name}\"?",
+    "confirmDeleteSub": "Tej operacji nie można cofnąć."
+  },
+  "permissions": {
+    "title": "Macierz uprawnień",
+    "sub": "kliknij komórkę lub Edytuj aby zmienić dostęp",
+    "refresh": "↺ Odśwież"
+  },
+  "policies": {
+    "title": "Polityki",
+    "sub": "wbudowane polityki IAM",
+    "newPolicy": "+ Nowa polityka",
+    "colName": "Nazwa polityki",
+    "colType": "Typ",
+    "colActions": "Akcje",
+    "btnEdit": "Edytuj",
+    "btnDelete": "Usuń",
+    "builtIn": "wbudowana",
+    "custom": "własna",
+    "errorEmpty": "Podaj nazwę polityki",
+    "errorJson": "Nieprawidłowy JSON: {msg}",
+    "saved": "Polityka \"{name}\" zapisana",
+    "deleted": "Polityka usunięta",
+    "confirmDelete": "Usunąć politykę \"{name}\"?",
+    "confirmDeleteSub": "Użytkownicy z tą polityką stracą dostęp.",
+    "adminRequired": "Wymagane uprawnienia admina"
+  },
+  "buckets": {
+    "title": "Buckety",
+    "sub": "wszystkie dostępne buckety",
+    "newBucket": "＋ Nowy bucket",
+    "browse": "📂 Przeglądaj",
+    "unknownDate": "nieznana data",
+    "errorEmpty": "Podaj nazwę bucketa",
+    "created": "Bucket \"{name}\" utworzony",
+    "deleted": "Bucket \"{name}\" usunięty",
+    "confirmDelete": "Usunąć bucket \"{name}\"?",
+    "confirmDeleteSub": "Wszystkie pliki zostaną trwale usunięte.",
+    "noBucketsAccessible": "Brak dostępnych bucketów"
+  },
+  "files": {
+    "title": "Pliki",
+    "upload": "↑ Wyślij",
+    "newFolder": "+ Folder",
+    "browseFiles": "przeglądaj pliki",
+    "folderCreated": "Folder utworzony",
+    "deleted": "Usunięto",
+    "downloadFailed": "Błąd pobierania: {msg}",
+    "confirmDelete": "Usunąć \"{name}\"?",
+    "confirmDeleteFileSub": "Tej operacji nie można cofnąć.",
+    "confirmDeleteDirSub": "Cała zawartość zostanie usunięta.",
+    "previewUnavailable": "Podgląd niedostępny dla .{ext}",
+    "download": "↓ Pobierz",
+    "htmlPreviewQ": "Plik HTML — jak chcesz go zobaczyć?",
+    "htmlPreview": "Podgląd",
+    "htmlSource": "Kod źródłowy",
+    "emptyFolder": "Pusty folder",
+    "noData": "Brak danych"
+  },
+  "modals": {
+    "cancel": "Anuluj",
+    "save": "Zapisz",
+    "close": "Zamknij",
+    "confirm": "Potwierdź",
+    "done": "Gotowe",
+    "create": "Utwórz",
+    "rename": {
+      "title": "Zmień nazwę",
+      "labelNewName": "Nowa nazwa",
+      "submit": "Zmień nazwę"
+    },
+    "bucketAccess": {
+      "title": "Dostęp do bucketów",
+      "tabVisual": "Wizualny",
+      "tabJson": "Polityka JSON",
+      "visualHint": "Kliknij poziom dostępu dla każdego bucketa. Zapisanie nadpisze wszystkie poprzednie polityki użytkownika.",
+      "jsonHint": "Edytuj surowy JSON polityki. Zostanie zapisany jako",
+      "saveAccess": "Zapisz dostęp",
+      "saving": "Zapisywanie…",
+      "saved": "Dostęp zapisany",
+      "savedWarnings": "Zapisano z ostrzeżeniami: {msg}",
+      "policySaved": "Polityka zapisana",
+      "accessNone": "✕ brak",
+      "accessR": "→ odczyt",
+      "accessW": "← zapis",
+      "accessRW": "⇄ pełny"
+    },
+    "createUser": {
+      "title": "Utwórz użytkownika",
+      "labelUsername": "Klucz dostępu (nazwa)",
+      "labelPassword": "Hasło",
+      "passwordHint": "(puste = auto)",
+      "labelPolicies": "Początkowe polityki",
+      "usernamePlaceholder": "alice",
+      "passwordPlaceholder": "auto-generowane jeśli puste",
+      "submit": "Utwórz użytkownika"
+    },
+    "userCreated": {
+      "title": "✅ Użytkownik utworzony",
+      "hint": "Zapisz hasło — nie zostanie pokazane ponownie.",
+      "labelAccessKey": "Klucz dostępu",
+      "labelSecretKey": "Klucz tajny"
+    },
+    "editPolicies": {
+      "title": "Polityki",
+      "save": "Zapisz",
+      "saved": "Polityki zaktualizowane"
+    },
+    "resetPwd": {
+      "title": "🔑 Nowe hasło",
+      "hint": "Hasło zostało zresetowane. Zapisz je teraz."
+    },
+    "createBucket": {
+      "title": "Utwórz bucket",
+      "labelName": "Nazwa bucketa",
+      "namePlaceholder": "moj-bucket",
+      "nameHint": "małe litery, cyfry, myślniki",
+      "labelRegion": "Region (opcjonalnie)",
+      "regionPlaceholder": "us-east-1",
+      "submit": "Utwórz"
+    },
+    "createPolicy": {
+      "titleCreate": "Utwórz politykę",
+      "titleEdit": "Edytuj politykę",
+      "labelName": "Nazwa polityki",
+      "namePlaceholder": "zdjecia-tylko-odczyt",
+      "labelJson": "Dokument JSON",
+      "submit": "Zapisz politykę"
+    },
+    "upload": {
+      "title": "Wyślij pliki",
+      "dropHint": "Upuść pliki lub kliknij aby wybrać",
+      "multipleHint": "Obsługiwane wiele plików"
+    },
+    "mkdir": {
+      "title": "Nowy folder",
+      "labelName": "Nazwa folderu",
+      "submit": "Utwórz"
+    },
+    "share": {
+      "title": "Udostępnij link",
+      "labelExpire": "Wygasa (godziny)",
+      "labelUrl": "Podpisany URL",
+      "generate": "Generuj link"
+    },
+    "preview": {
+      "download": "↓ Pobierz"
+    }
+  },
+  "toast": {
+    "copied": "Skopiowano!"
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "login": {
+    "connecting": "connecting…",
+    "accessKey": "Access Key",
+    "secretKey": "Secret Key",
+    "accessKeyPlaceholder": "your access key",
+    "signIn": "Sign in →",
+    "signingIn": "Signing in…",
+    "errorEmpty": "Enter access key and secret key",
+    "errorFailed": "Login failed"
+  },
+  "nav": {
+    "overview": "Overview",
+    "dashboard": "Dashboard",
+    "admin": "Admin",
+    "users": "Users",
+    "permissions": "Permissions",
+    "policies": "Policies",
+    "storage": "Storage",
+    "allBuckets": "All Buckets"
+  },
+  "topbar": {
+    "admin": "admin",
+    "logout": "Logout"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "loading": "loading…",
+    "yourBuckets": "Your Buckets",
+    "newBucket": "＋ New Bucket",
+    "noBuckets": "No buckets",
+    "loggedInAs": "Logged in as"
+  },
+  "stats": {
+    "buckets": "Buckets",
+    "activeUsers": "Active Users",
+    "disabled": "Disabled",
+    "storageUsed": "Storage Used"
+  },
+  "users": {
+    "title": "Users",
+    "sub": "manage access keys and policies",
+    "newUser": "+ New User",
+    "searchPlaceholder": "Search users…",
+    "colAccessKey": "Access Key",
+    "colStatus": "Status",
+    "colPolicies": "Policies",
+    "colActions": "Actions",
+    "noUsers": "No users",
+    "btnAccess": "Access",
+    "btnPolicies": "Policies",
+    "btnResetPwd": "Reset pwd",
+    "btnDisable": "Disable",
+    "btnEnable": "Enable",
+    "btnDelete": "Delete",
+    "errorEmpty": "Enter username",
+    "created": "User created",
+    "deleted": "User \"{name}\" deleted",
+    "toggled": "User {action}d",
+    "confirmDelete": "Delete user \"{name}\"?",
+    "confirmDeleteSub": "This cannot be undone."
+  },
+  "permissions": {
+    "title": "Permission Matrix",
+    "sub": "click any cell or Edit to change access",
+    "refresh": "↺ Refresh"
+  },
+  "policies": {
+    "title": "Policies",
+    "sub": "IAM canned policies",
+    "newPolicy": "+ New Policy",
+    "colName": "Policy Name",
+    "colType": "Type",
+    "colActions": "Actions",
+    "btnEdit": "Edit",
+    "btnDelete": "Delete",
+    "builtIn": "built-in",
+    "custom": "custom",
+    "errorEmpty": "Enter policy name",
+    "errorJson": "Invalid JSON: {msg}",
+    "saved": "Policy \"{name}\" saved",
+    "deleted": "Policy deleted",
+    "confirmDelete": "Delete policy \"{name}\"?",
+    "confirmDeleteSub": "Users assigned this policy will lose access.",
+    "adminRequired": "Admin required"
+  },
+  "buckets": {
+    "title": "Buckets",
+    "sub": "all accessible buckets",
+    "newBucket": "＋ New Bucket",
+    "browse": "📂 Browse",
+    "unknownDate": "unknown date",
+    "errorEmpty": "Enter bucket name",
+    "created": "Bucket \"{name}\" created",
+    "deleted": "Bucket \"{name}\" deleted",
+    "confirmDelete": "Delete bucket \"{name}\"?",
+    "confirmDeleteSub": "All files will be permanently deleted.",
+    "noBucketsAccessible": "No buckets accessible"
+  },
+  "files": {
+    "title": "Files",
+    "upload": "↑ Upload",
+    "newFolder": "+ Folder",
+    "browseFiles": "browse files",
+    "folderCreated": "Folder created",
+    "deleted": "Deleted",
+    "downloadFailed": "Download failed: {msg}",
+    "confirmDelete": "Delete \"{name}\"?",
+    "confirmDeleteFileSub": "This cannot be undone.",
+    "confirmDeleteDirSub": "All contents will be deleted.",
+    "previewUnavailable": "Preview unavailable for .{ext}",
+    "download": "↓ Download",
+    "htmlPreviewQ": "HTML file — how do you want to view it?",
+    "htmlPreview": "Preview",
+    "htmlSource": "View source",
+    "emptyFolder": "Empty folder",
+    "noData": "No data"
+  },
+  "modals": {
+    "cancel": "Cancel",
+    "save": "Save",
+    "close": "Close",
+    "confirm": "Confirm",
+    "done": "Done",
+    "create": "Create",
+    "rename": {
+      "title": "Rename",
+      "labelNewName": "New Name",
+      "submit": "Rename"
+    },
+    "bucketAccess": {
+      "title": "Bucket Access",
+      "tabVisual": "Visual",
+      "tabJson": "JSON Policy",
+      "visualHint": "Click access level for each bucket. Saving will overwrite all previous user policies.",
+      "jsonHint": "Edit raw policy JSON. Will be saved as",
+      "saveAccess": "Save Access",
+      "saving": "Saving…",
+      "saved": "Access saved",
+      "savedWarnings": "Saved with warnings: {msg}",
+      "policySaved": "Policy saved",
+      "accessNone": "✕ none",
+      "accessR": "→ read",
+      "accessW": "← write",
+      "accessRW": "⇄ rw"
+    },
+    "createUser": {
+      "title": "Create User",
+      "labelUsername": "Access Key (username)",
+      "labelPassword": "Password",
+      "passwordHint": "(blank = auto)",
+      "labelPolicies": "Initial Policies",
+      "usernamePlaceholder": "alice",
+      "passwordPlaceholder": "auto-generated if empty",
+      "submit": "Create User"
+    },
+    "userCreated": {
+      "title": "✅ User Created",
+      "hint": "Save the password — it won't be shown again.",
+      "labelAccessKey": "Access Key",
+      "labelSecretKey": "Secret Key"
+    },
+    "editPolicies": {
+      "title": "Policies",
+      "save": "Save",
+      "saved": "Policies updated"
+    },
+    "resetPwd": {
+      "title": "🔑 New Password",
+      "hint": "Password has been reset. Save it now."
+    },
+    "createBucket": {
+      "title": "Create Bucket",
+      "labelName": "Bucket Name",
+      "namePlaceholder": "my-bucket",
+      "nameHint": "lowercase, numbers, hyphens",
+      "labelRegion": "Region (optional)",
+      "regionPlaceholder": "us-east-1",
+      "submit": "Create"
+    },
+    "createPolicy": {
+      "titleCreate": "Create Policy",
+      "titleEdit": "Edit Policy",
+      "labelName": "Policy Name",
+      "namePlaceholder": "photos-readonly",
+      "labelJson": "JSON Document",
+      "submit": "Save Policy"
+    },
+    "upload": {
+      "title": "Upload Files",
+      "dropHint": "Drop files or click to browse",
+      "multipleHint": "Multiple files supported"
+    },
+    "mkdir": {
+      "title": "New Folder",
+      "labelName": "Folder Name",
+      "submit": "Create"
+    },
+    "share": {
+      "title": "Share Link",
+      "labelExpire": "Expire (hours)",
+      "labelUrl": "Presigned URL",
+      "generate": "Generate Link"
+    },
+    "preview": {
+      "download": "↓ Download"
+    }
+  },
+  "toast": {
+    "copied": "Copied!"
+  }
+}
