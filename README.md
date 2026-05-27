@@ -1,169 +1,312 @@
+<div align="center">
+
 # minio-dash
 
-> A clean, self-contained web dashboard for MinIO — no `mc` CLI required.
+**Full S3 admin dashboard for MinIO — no `mc` CLI needed**
 
-**minio-dash** is a single-file Python + HTML dashboard for managing MinIO instances. It talks directly to the MinIO SDK and admin API, supports multiple languages, and runs with a single command.
+[![License](https://img.shields.io/badge/License-MIT-red?style=for-the-badge)](LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/MarceliRacis/minio-dash?style=for-the-badge&color=red&logo=git&logoColor=white)](https://github.com/MarceliRacis/minio-dash/commits/main)
+[![Docker](https://img.shields.io/badge/Docker-multi--arch-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com)
+[![Python](https://img.shields.io/badge/Python-Flask-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://flask.palletsprojects.com)
+
+[![MinIO](https://img.shields.io/badge/MinIO-S3%20SDK-C72E49?style=for-the-badge&logo=minio&logoColor=white)](https://min.io)
+[![JWT](https://img.shields.io/badge/Auth-JWT%20HS256-000000?style=for-the-badge&logo=jsonwebtokens&logoColor=white)](https://jwt.io)
+[![Gunicorn](https://img.shields.io/badge/Server-Gunicorn-499848?style=for-the-badge&logo=gunicorn&logoColor=white)](https://gunicorn.org)
+
+[![GitLab](https://img.shields.io/badge/GitLab-Original%20Repo-609926?style=for-the-badge&logo=gitlab&logoColor=white)](https://git.racis.dev/marceliracis/minio-dash)
+[![GitHub Mirror](https://img.shields.io/badge/GitHub-Mirror-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/MarceliRacis/minio-dash)
+
+A web-based admin panel for MinIO — manage buckets, files, users, policies and permissions directly in the browser.
+Uses the MinIO Python SDK and admin REST API with AWS Signature V4 signing. No external tools required.
+
+[**GitLab (source)**](https://git.racis.dev/marceliracis/minio-dash) · [**GitHub (mirror)**](https://github.com/MarceliRacis/minio-dash)
+
+</div>
 
 ---
 
 ## Features
 
-- **File manager** — browse, upload, download, rename, delete files and folders, generate presigned share links, inline preview for images, text, video and more
-- **Bucket management** — create and delete buckets, set per-bucket policies
-- **User management** — create users, reset passwords, enable/disable accounts
-- **Permission matrix** — visual overview of which users have access to which buckets (read / write / read-write / none)
-- **IAM policies** — list, create, edit and delete canned policies; assign policies to users
-- **Multi-language** — English and Polish UI, auto-detected from browser locale, switchable at runtime
-- **JWT auth** — sessions are signed with a secret key, expire after 8 hours
-- **Zero dependencies on the frontend** — pure vanilla JS, no frameworks, no bundler
+- **Bucket management** — create, delete (with optional force-delete of all contents), browse
+- **File browser** — upload, download, view inline, rename, delete, create folders, generate share links
+- **User management** — create/delete users, enable/disable accounts, reset passwords, assign policies
+- **Policy management** — list, view, create and delete IAM policies
+- **Permission matrix** — visual table showing which user has read/write access to which bucket
+- **Bucket-level access editor** — set per-bucket `r` / `w` / `rw` / `none` for any user via auto-generated custom policy
+- **JWT authentication** — login with MinIO access key + secret key; sessions last 8 hours
+- **Admin auto-detection** — automatically detects if the logged-in user has admin privileges
+- **i18n** — English and Polish UI (🇬🇧 / 🇵🇱)
+- **Multi-arch Docker image** — runs on both `amd64` and `arm64`
 
 ---
 
-## Requirements
+## Quick Start (Docker) ⭐
 
-- Python 3.10+
-- A running MinIO instance
-
----
-
-## Installation
+### 1. Configure environment
 
 ```bash
-git clone https://git.racis.dev/marceliracis/minio-dash
-cd minio-dash
-pip install flask minio PyJWT
+cp .env.example .env
 ```
 
----
+Fill in `.env`:
 
-## Usage
+```env
+MINIO_ENDPOINT=https://s3.example.com
+SECRET_KEY=your-long-random-jwt-secret
+PORT=7474
+WEBUI_HOST=https://minio-dash.example.com
+GUNICORN_WORKERS=2
+GUNICORN_THREADS=1
+```
+
+Generate a secure `SECRET_KEY`:
 
 ```bash
-MINIO_ENDPOINT=s3.example.com python server.py
+python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-Then open [http://localhost:7474](http://localhost:7474) and log in with your MinIO access key and secret key.
+> **Note:** If `SECRET_KEY` is not set, a random secret is generated on every startup — existing sessions will be invalidated on each restart.
 
----
+### 2. Run
 
-## Configuration
-
-All configuration is done via environment variables:
-
-| Variable | Default | Description |
-|---|---|---|
-| `MINIO_ENDPOINT` | `localhost:9000` | MinIO endpoint — with or without `https://` prefix |
-| `SECRET_KEY` | *(auto-generated)* | JWT signing secret — set this in production to persist sessions across restarts |
-| `PORT` | `7474` | HTTP port to listen on |
-
-### HTTPS
-
-Prefix your endpoint with `https://` to enable TLS:
+**With Docker Compose (recommended):**
 
 ```bash
-MINIO_ENDPOINT=https://s3.example.com python server.py
+docker compose up -d
 ```
 
-Use `http://` to force plain HTTP (e.g. for local development):
+**Using the prebuilt image directly:**
 
 ```bash
-MINIO_ENDPOINT=http://localhost:9000 python server.py
+docker run -d \
+  --name minio-dash \
+  --restart unless-stopped \
+  -p 7474:7474 \
+  -e MINIO_ENDPOINT=https://s3.example.com \
+  -e SECRET_KEY=changeme \
+  registry.racis.dev/marceliracis/minio-dash:latest
 ```
 
----
-
-## Locale files (optional)
-
-By default, translations are bundled inside `ui.html`. If you want to override them, create a `locales/` directory next to `server.py`:
-
-```
-locales/
-  en.json
-  pl.json
-```
-
-The server will pick them up automatically and serve them at `/i18n/<lang>`.
-
----
-
-## Running with Docker
-
-```dockerfile
-FROM python:3.12-slim
-WORKDIR /app
-COPY . .
-RUN pip install flask minio PyJWT
-ENV MINIO_ENDPOINT=s3.example.com
-EXPOSE 7474
-CMD ["python", "server.py"]
-```
+**Build from source:**
 
 ```bash
 docker build -t minio-dash .
-docker run -p 7474:7474 -e MINIO_ENDPOINT=s3.example.com -e SECRET_KEY=changeme minio-dash
+
+docker run -d \
+  --name minio-dash \
+  --restart unless-stopped \
+  -p 7474:7474 \
+  --env-file .env \
+  minio-dash
+```
+
+### 3. Open
+
+```
+http://localhost:7474
+```
+
+Log in with your MinIO **access key** (username) and **secret key** (password).
+
+---
+
+## How It Works
+
+1. **Log in** — enter your MinIO access key and secret key
+2. The server verifies credentials by calling `list_buckets()` against your MinIO instance
+3. Admin privileges are auto-detected via the MinIO admin API
+4. A signed **JWT token** (HS256, TTL 8h) is returned and stored in the browser
+5. All subsequent API calls are authenticated via the JWT; credentials are cached server-side for the session duration
+
+---
+
+## Authentication
+
+minio-dash does **not** store your MinIO credentials on disk. They are held in memory in the server-side credential cache for the duration of the session (8 hours by default) and cleared on logout or expiry.
+
+| Header / Cookie | Value |
+|-----------------|-------|
+| `Authorization` | `Bearer <jwt>` |
+| Cookie fallback | `token=<jwt>` |
+
+Admin-only endpoints return `403 Forbidden` if the logged-in user does not have MinIO admin privileges.
+
+---
+
+## Running Locally Without Docker
+
+```bash
+# Install dependencies
+pip install flask minio PyJWT gunicorn
+
+# Or using requirements.txt
+pip install -r requirements.txt
+
+# Set env vars and start
+MINIO_ENDPOINT=https://s3.example.com \
+SECRET_KEY=changeme \
+python server.py
 ```
 
 ---
 
-## Running with systemd
+## Production Deployment (VPS)
 
-```ini
-[Unit]
-Description=minio-dash
-After=network.target
+1. Set `MINIO_ENDPOINT` to your MinIO instance URL
+2. Set a persistent `SECRET_KEY` (otherwise sessions break on restart)
+3. Place a reverse proxy (nginx or Caddy) in front of port 7474
 
-[Service]
-WorkingDirectory=/opt/minio-dash
-ExecStart=/usr/bin/python3 server.py
-Environment=MINIO_ENDPOINT=s3.example.com
-Environment=SECRET_KEY=changeme
-Environment=PORT=7474
-Restart=always
+**nginx config:**
 
-[Install]
-WantedBy=multi-user.target
+```nginx
+server {
+    server_name minio-dash.yourdomain.com;
+
+    location / {
+        proxy_pass http://localhost:7474;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Required for large file uploads/downloads
+        client_max_body_size 0;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
 ```
 
 ---
 
-## Project structure
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MINIO_ENDPOINT` | ✅ | `localhost:9000` | MinIO endpoint (with or without `https://`) |
+| `SECRET_KEY` | ⚠️ | auto-generated | JWT signing secret — set this in production |
+| `PORT` | ❌ | `7474` | HTTP port to listen on |
+| `WEBUI_HOST` | ❌ | `http://localhost:7474` | Public URL shown in startup banner |
+| `GUNICORN_WORKERS` | ❌ | `2` | Number of Gunicorn worker processes |
+| `GUNICORN_THREADS` | ❌ | `1` | Number of threads per worker |
+
+> If `MINIO_ENDPOINT` contains `http://`, TLS verification is disabled automatically. Otherwise HTTPS with cert verification is used.
+
+---
+
+## API Reference
+
+All endpoints (except `/api/login`) require a valid JWT via `Authorization: Bearer <token>` header or `token` cookie.
+
+### Auth
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/login` | — | Login with `{username, password}` → returns JWT |
+| `POST` | `/api/logout` | User | Invalidates session |
+| `GET` | `/api/me` | User | Returns current user info + admin flag |
+
+### Buckets
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/buckets` | User | List all buckets |
+| `POST` | `/api/buckets` | Admin | Create bucket `{name}` |
+| `DELETE` | `/api/buckets/:bucket` | Admin | Delete bucket; `{force: true}` removes all objects first |
+| `GET` | `/api/buckets/:bucket/info` | User | Object count and total size |
+| `GET` | `/api/buckets/:bucket/policy` | Admin | Get bucket IAM policy |
+| `PUT` | `/api/buckets/:bucket/policy` | Admin | Set or delete bucket IAM policy |
+
+### Files
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/buckets/:bucket/files?prefix=` | User | List files/folders at prefix |
+| `POST` | `/api/buckets/:bucket/files/upload?prefix=` | User | Upload file (multipart) |
+| `GET` | `/api/buckets/:bucket/files/view?key=` | User | Stream file (inline for images, video, PDF, text) |
+| `GET` | `/api/buckets/:bucket/files/download?key=` | User | Force-download file |
+| `POST` | `/api/buckets/:bucket/files/delete` | User | Delete file or folder `{key, recursive?}` |
+| `POST` | `/api/buckets/:bucket/files/rename` | User | Rename/move `{src, dst}` |
+| `POST` | `/api/buckets/:bucket/files/mkdir` | User | Create folder `{prefix, name}` |
+| `POST` | `/api/buckets/:bucket/files/share` | User | Generate presigned URL `{key, expire}` (hours, default 168) |
+
+### Users
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/users` | Admin | List all users with status and policies |
+| `POST` | `/api/users` | Admin | Create user `{username, password?, policies?}` |
+| `DELETE` | `/api/users/:username` | Admin | Delete user |
+| `POST` | `/api/users/:username/enable` | Admin | Enable user |
+| `POST` | `/api/users/:username/disable` | Admin | Disable user |
+| `GET` | `/api/users/:username/info` | Admin | Get full user info |
+| `GET` | `/api/users/:username/policies` | Admin | List user's policies |
+| `PUT` | `/api/users/:username/policies` | Admin | Replace user's policies `{policies: [...]}` |
+| `POST` | `/api/users/:username/reset-password` | Admin | Generate and set a new random password |
+| `PUT` | `/api/users/:username/bucket-access` | Admin | Set per-bucket access `{access: {bucket: 'rw'\|'r'\|'w'\|'none'}}` |
+
+### Policies
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/policies` | Admin | List all policies |
+| `GET` | `/api/policies/:name` | Admin | Get policy JSON |
+| `POST` | `/api/policies` | Admin | Create policy `{name, policy}` |
+| `DELETE` | `/api/policies/:name` | Admin | Delete policy |
+
+### Permission Matrix
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/api/permission-matrix` | Admin | Returns `{users, buckets, matrix, userPolicies}` |
+
+---
+
+## Project Structure
 
 ```
 minio-dash/
-├── server.py      # Flask backend — auth, MinIO SDK calls, REST API
-├── ui.html        # Single-file frontend — all HTML, CSS and JS
-└── locales/       # Optional translation overrides
-    ├── en.json
-    └── pl.json
+├── Dockerfile                  # Python 3.11-slim image
+├── docker-compose.yml
+├── .env.example
+├── requirements.txt
+├── server.py                   # Flask app — all routes, JWT auth, MinIO SDK
+├── ui.html                     # Single-file frontend (HTML + CSS + JS)
+└── locales/
+    ├── en.json                 # English translations
+    └── pl.json                 # Polish translations
 ```
 
 ---
 
-## Roadmap — v2
+## Useful Docker Commands
 
-> v2 will be a full rebuild focused on production hardening and UX improvements.
+```bash
+# Pull latest image
+docker pull registry.racis.dev/marceliracis/minio-dash:latest
 
-**Security**
-- Rate limiting on `/api/login` to prevent brute-force attacks
-- CSRF protection
-- Security headers (Content-Security-Policy, X-Frame-Options, etc.)
+# Start in background
+docker compose up -d
 
-**Operability**
-- `/healthz` endpoint for k8s liveness / readiness probes
-- Proper structured logging with log levels (replacing `print()`)
-- Prometheus metrics endpoint
+# Stop
+docker compose down
 
-**UX**
-- Pagination for large file and user lists
-- File search within buckets
-- Chunked / multipart upload for large files
+# View logs
+docker compose logs -f
 
-**Stability**
-- S3 operation timeouts
-- Graceful error handling — no raw stack traces exposed to the client
+# Check container status
+docker ps | grep minio-dash
+
+# Open a shell inside the container (debug)
+docker exec -it minio-dash sh
+
+# Build and push a new version
+docker build -t registry.racis.dev/marceliracis/minio-dash:latest .
+docker push registry.racis.dev/marceliracis/minio-dash:latest
+```
 
 ---
 
-## Author
+## License
 
-Created by [Marceli Racis](https://racis.dev) 
+[MIT](LICENSE) © [Marceli Racis](https://racis.dev)
