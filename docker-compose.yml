@@ -1,0 +1,10 @@
+services:
+  minio-dash:
+    image: registry.racis.dev/marceliracis/minio-dash:latest
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+    environment:
+      - MINIO_ENDPOINT=s3.racis.dev
+      - SECRET_KEY=changeme
+      - PORT=7474
