@@ -663,7 +663,12 @@ function t(key, vars) { return I18N.get(key, vars); }
 
 // ═══════ API ═══════
 async function api(method, path, body, raw=false) {
-  const opts = { method, headers: { 'Authorization': `Bearer ${S.token}` } };
+  const opts = { 
+    method, 
+    headers: { 
+      'X-Requested-With': 'XMLHttpRequest'
+    } 
+  };
   if (body && !(body instanceof FormData)) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -671,7 +676,12 @@ async function api(method, path, body, raw=false) {
     opts.body = body;
   }
   const r = await fetch('/api' + path, opts);
-  if (r.status === 401) { logout(true); throw new Error(t('login.errorFailed')); }
+  if (r.status === 401) { 
+    if (document.getElementById('app').classList.contains('visible')) {
+      logout(true); 
+    }
+    throw new Error(t('login.errorFailed')); 
+  }
   if (raw) return r;
   const j = await r.json();
   if (!r.ok) throw new Error(j.error || 'Request failed');
@@ -1349,7 +1359,7 @@ async function uploadFiles(files) {
 
 async function downloadFile(key) {
   const url=`/api/buckets/${encodeURIComponent(S.currentBucket)}/files/download?key=${encodeURIComponent(key)}`;
-  const r=await fetch(url,{headers:{'Authorization':`Bearer ${S.token}`}});
+  const r=await fetch(url,{headers:{'X-Requested-With': 'XMLHttpRequest'}});
   if (!r.ok) { toast(t('files.downloadFailed',{msg:r.statusText}),'error'); return; }
   const blob=await r.blob();
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=key.split('/').pop(); a.click(); URL.revokeObjectURL(a.href);
@@ -1436,6 +1446,8 @@ async function openPreview(key) {
 async function showHtmlIframe(url) {
   const blob = await fetchWithAuth(url);
   const blobUrl = URL.createObjectURL(blob);
+  // Using sandbox="allow-scripts" WITHOUT "allow-same-origin" forces a unique origin.
+  // This allows JS to run in a sandbox but prevents access to the parent's cookies, localStorage, and API.
   document.getElementById('preview-container').innerHTML = `<iframe src="${blobUrl}" class="preview-iframe" sandbox="allow-scripts"></iframe>`;
 }
 
@@ -1447,7 +1459,7 @@ async function showTextPreviewCont(url,cont) {
 }
 
 async function fetchWithAuth(url) {
-  const r=await fetch(url,{headers:{'Authorization':`Bearer ${S.token}`}});
+  const r=await fetch(url,{headers:{'X-Requested-With': 'XMLHttpRequest'}});
   if (!r.ok) throw new Error(await r.text());
   return r.blob();
 }

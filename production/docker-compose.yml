@@ -1,0 +1,29 @@
+services:
+  minio-dash:
+    image: registry.racis.dev/marceliracis/minio-dash:latest
+    restart: unless-stopped
+    ports:
+      - "${PORT:-7474}:7474"
+    environment:
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - SESSION_BACKEND=${SESSION_BACKEND:-jwt}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - SECRET_KEY=${SECRET_KEY}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - PORT=7474
+      - WEBUI_HOST=${WEBUI_HOST}
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
+      - GUNICORN_THREADS=${GUNICORN_THREADS:-1}
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7474/')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning

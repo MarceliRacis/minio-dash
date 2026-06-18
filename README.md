@@ -106,7 +106,28 @@ docker run -d \
   --restart unless-stopped \
   -p 7474:7474 \
   -e MINIO_ENDPOINT=https://s3.example.com \
+  -e SESSION_BACKEND=jwt \
   -e SECRET_KEY=changeme \
+  -e ENCRYPTION_KEY=changeme-encryption-key \
+  -e PORT=7474 \
+  -e WEBUI_HOST=https://minio-dash.example.com \
+  -e GUNICORN_WORKERS=2 \
+  -e GUNICORN_THREADS=1 \
+  registry.racis.dev/marceliracis/minio-dash:latest
+```
+
+**Using with Redis (Stateful session storage):**
+
+```bash
+docker run -d \
+  --name minio-dash-redis \
+  --restart unless-stopped \
+  -p 7474:7474 \
+  -e MINIO_ENDPOINT=https://s3.example.com \
+  -e SESSION_BACKEND=redis \
+  -e REDIS_URL=redis://your-redis-host:6379/0 \
+  -e SECRET_KEY=changeme \
+  -e PORT=7474 \
   registry.racis.dev/marceliracis/minio-dash:latest
 ```
 
@@ -135,22 +156,29 @@ Log in with your MinIO **access key** (username) and **secret key** (password).
 
 ## How It Works
 
-1. **Log in** — enter your MinIO access key and secret key
-2. The server verifies credentials by calling `list_buckets()` against your MinIO instance
-3. Admin privileges are auto-detected via the MinIO admin API
-4. A signed **JWT token** (HS256, TTL 8h) is returned and stored in the browser
-5. All subsequent API calls are authenticated via the JWT; credentials are cached server-side for the session duration
+1. **Log in** — enter your MinIO access key and secret key.
+2. The server verifies credentials against your MinIO instance. Admin privileges are auto-detected.
+3. A signed **JWT token** (HS256, TTL 8h) is generated.
+4. **Session Storage**: Depending on `SESSION_BACKEND`, credentials are either encrypted inside the JWT (stateless) or stored in Redis (stateful).
+5. The token is stored in a **Secure, HttpOnly Cookie**, protecting it from XSS attacks.
+6. All subsequent API calls are authenticated via this cookie and protected by **CSRF validation** (X-Requested-With header).
 
 ---
 
-## Authentication
+## Authentication & Security
 
-minio-dash does **not** store your MinIO credentials on disk. They are held in memory in the server-side credential cache for the duration of the session (8 hours by default) and cleared on logout or expiry.
+minio-dash uses industry-standard security practices to protect your S3 credentials:
 
-| Header / Cookie | Value |
+- **No Local Storage**: JWT is stored in an `HttpOnly` cookie. JavaScript cannot access it.
+- **CSRF Protection**: All modifying requests (`POST`, `PUT`, `DELETE`) require an `X-Requested-With` header.
+- **Session Flexibility**: Choose between stateless JWT-based sessions or stateful Redis-based sessions.
+- **Encryption**: In `jwt` mode, S3 credentials are encrypted with `AES-256-GCM` before being placed in the token payload.
+
+| Security Layer | Mechanism |
 |-----------------|-------|
-| `Authorization` | `Bearer <jwt>` |
-| Cookie fallback | `token=<jwt>` |
+| **JWT Storage** | `HttpOnly`, `SameSite=Lax` Cookie |
+| **CSRF** | Mandatory `X-Requested-With: XMLHttpRequest` header |
+| **Encryption** | `AES-256-GCM` (using `ENCRYPTION_KEY`) |
 
 Admin-only endpoints return `403 Forbidden` if the logged-in user does not have MinIO admin privileges.
 
@@ -160,14 +188,28 @@ Admin-only endpoints return `403 Forbidden` if the logged-in user does not have 
 
 ```bash
 # Install dependencies
-pip install flask minio PyJWT gunicorn
+pip install flask minio PyJWT gunicorn pycryptodome
 
 # Or using requirements.txt
 pip install -r requirements.txt
 
-# Set env vars and start
+# Set env vars and start (Stateless JWT mode)
 MINIO_ENDPOINT=https://s3.example.com \
-SECRET_KEY=changeme \
+SESSION_BACKEND=jwt \
+SECRET_KEY=your-jwt-secret \
+ENCRYPTION_KEY=your-aes-key \
+PORT=7474 \
+WEBUI_HOST=https://minio-dash.example.com \
+GUNICORN_WORKERS=2 \
+GUNICORN_THREADS=1 \
+python server.py
+
+# Or with Redis backend (Stateful mode)
+MINIO_ENDPOINT=https://s3.example.com \
+SESSION_BACKEND=redis \
+REDIS_URL=redis://localhost:6379/0 \
+SECRET_KEY=your-jwt-secret \
+PORT=7474 \
 python server.py
 ```
 
@@ -176,7 +218,7 @@ python server.py
 ## Production Deployment (VPS)
 
 1. Set `MINIO_ENDPOINT` to your MinIO instance URL
-2. Set a persistent `SECRET_KEY` (otherwise sessions break on restart)
+2. Set persistent `SECRET_KEY` and `ENCRYPTION_KEY`
 3. Place a reverse proxy (nginx or Caddy) in front of port 7474
 
 **nginx config:**
@@ -207,19 +249,22 @@ server {
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `MINIO_ENDPOINT` | ✅ | `localhost:9000` | MinIO endpoint (with or without `https://`) |
-| `SECRET_KEY` | ⚠️ | auto-generated | JWT signing secret — set this in production |
+| `SECRET_KEY` | ✅ | auto-generated | JWT signing secret — **set this in production** |
+| `ENCRYPTION_KEY` | ✅ | auto-generated | AES key for encrypting S3 creds in JWT mode |
+| `SESSION_BACKEND`| ❌ | `jwt` | Session storage: `jwt` (stateless) or `redis` (stateful) |
+| `REDIS_URL` | ⚠️ | None | Required if `SESSION_BACKEND=redis` |
 | `PORT` | ❌ | `7474` | HTTP port to listen on |
 | `WEBUI_HOST` | ❌ | `http://localhost:7474` | Public URL shown in startup banner |
 | `GUNICORN_WORKERS` | ❌ | `2` | Number of Gunicorn worker processes |
 | `GUNICORN_THREADS` | ❌ | `1` | Number of threads per worker |
 
-> If `MINIO_ENDPOINT` contains `http://`, TLS verification is disabled automatically. Otherwise HTTPS with cert verification is used.
+> **Security Note:** If `SECRET_KEY` or `ENCRYPTION_KEY` are not set, they are generated randomly on each startup. This will invalidate all active sessions when the server restarts.
 
 ---
 
 ## API Reference
 
-All endpoints (except `/api/login`) require a valid JWT via `Authorization: Bearer <token>` header or `token` cookie.
+All endpoints (except `/api/login`) require a valid session cookie and `X-Requested-With: XMLHttpRequest` header for write operations.
 
 ### Auth
 

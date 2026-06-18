@@ -13,7 +13,7 @@ Run:
   MINIO_ENDPOINT=s3.racis.dev python server.py
 """
 
-import os, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct
+import os, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct, datetime
 from pathlib import Path
 from functools import wraps
 from urllib.parse import urlparse
@@ -25,8 +25,12 @@ try:
     from minio.error import S3Error
     from minio.commonconfig import CopySource
     import urllib3
-except ImportError:
-    raise SystemExit("pip install minio")
+    import redis
+    import jwt as pyjwt
+    from Crypto.Cipher import AES
+    from Crypto.Protocol.KDF import PBKDF2
+except ImportError as e:
+    raise SystemExit(f"Missing dependency: {e}. Run: pip install -r requirements.txt")
 
 try:
     from minio.minioadmin import MinioAdmin
@@ -43,22 +47,84 @@ except ImportError:
     MinioAdmin = None
     StaticProvider = None
 
-try:
-    import jwt as pyjwt
-except ImportError:
-    raise SystemExit("pip install PyJWT")
-
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
-_raw_endpoint = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
-SECRET_KEY    = os.environ.get("SECRET_KEY", secrets.token_hex(32))
-PORT          = int(os.environ.get("PORT", 7474))
-SESSION_TTL   = 8 * 3600   # 8 hours
+_raw_endpoint    = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
+SECRET_KEY       = os.environ.get("SECRET_KEY")
+ENC_KEY_RAW      = os.environ.get("ENCRYPTION_KEY")
+REDIS_URL        = os.environ.get("REDIS_URL")
+SESSION_BACKEND  = os.environ.get("SESSION_BACKEND", "jwt").lower() # jwt or redis
+PORT             = int(os.environ.get("PORT", 7474))
+SESSION_TTL      = 8 * 3600   # 8 hours
+
+if not SECRET_KEY or not ENC_KEY_RAW:
+    print("CRITICAL: SECRET_KEY and ENCRYPTION_KEY must be set in environment!")
+    print(f"Generated SECRET_KEY suggestion: {secrets.token_hex(32)}")
+    print(f"Generated ENCRYPTION_KEY suggestion: {secrets.token_hex(16)}")
+    if os.environ.get("KUBERNETES_SERVICE_HOST"): # Fail fast in K8s
+        raise SystemExit("Missing required security environment variables")
+
+SECRET_KEY = SECRET_KEY or "dev-only-secret-key"
+ENC_KEY_RAW = ENC_KEY_RAW or "dev-only-encryption-key"
+
+# Derive a proper 32-byte key for AES-256
+_enc_key = PBKDF2(ENC_KEY_RAW, b"minio-dash-salt-v1", dkLen=32, count=1000)
 
 _parsed = urlparse(_raw_endpoint if "://" in _raw_endpoint else "https://" + _raw_endpoint)
 MINIO_HOST   = _parsed.netloc or _raw_endpoint.rstrip("/")
 MINIO_SECURE = _parsed.scheme != "http"
 
 app = Flask(__name__, static_folder=".", static_url_path="")
+
+# ─── SESSION MANAGEMENT (REDIS + AES-GCM) ────────────────────────────────────
+
+def encrypt_creds(ak: str, sk: str) -> str:
+    nonce = secrets.token_bytes(12)
+    cipher = AES.new(_enc_key, AES.MODE_GCM, nonce=nonce)
+    ct, tag = cipher.encrypt_and_digest(json.dumps({"ak": ak, "sk": sk}).encode())
+    return base64.b64encode(nonce + tag + ct).decode()
+
+def decrypt_creds(blob: str) -> dict | None:
+    try:
+        raw = base64.b64decode(blob)
+        nonce, tag, ct = raw[:12], raw[12:28], raw[28:]
+        cipher = AES.new(_enc_key, AES.MODE_GCM, nonce=nonce)
+        return json.loads(cipher.decrypt_and_verify(ct, tag).decode())
+    except Exception:
+        return None
+
+class SessionManager:
+    def __init__(self, redis_url: str | None):
+        self.r = redis.from_url(redis_url) if redis_url else None
+        self._local_cache = {} # Fallback for dev
+
+    def set(self, username: str, ak: str, sk: str, ttl: int):
+        if SESSION_BACKEND == "jwt": return # Creds stored in JWT
+        blob = encrypt_creds(ak, sk)
+        if self.r:
+            self.r.setex(f"sess:{username}", ttl, blob)
+        else:
+            self._local_cache[username] = {"blob": blob, "exp": time.time() + ttl}
+
+    def get(self, username: str) -> dict | None:
+        if SESSION_BACKEND == "jwt": return None # Extract from JWT instead
+        if self.r:
+            blob = self.r.get(f"sess:{username}")
+            if not blob: return None
+            return decrypt_creds(blob.decode())
+        else:
+            entry = self._local_cache.get(username)
+            if not entry or entry["exp"] < time.time():
+                self._local_cache.pop(username, None)
+                return None
+            return decrypt_creds(entry["blob"])
+
+    def delete(self, username: str):
+        if self.r:
+            self.r.delete(f"sess:{username}")
+        else:
+            self._local_cache.pop(username, None)
+
+_sessions = SessionManager(REDIS_URL)
 
 # ─── MinIO client factory ─────────────────────────────────────────────────────
 
@@ -90,8 +156,6 @@ def make_admin_client(access_key: str, secret_key: str):
     return MinioAdmin(**kwargs)
 
 
-import urllib3, hashlib, hmac, datetime
-
 _http = urllib3.PoolManager(
     cert_reqs="CERT_NONE" if not MINIO_SECURE else "CERT_REQUIRED",
     timeout=urllib3.Timeout(connect=5, read=20),
@@ -120,7 +184,6 @@ def _sign_v4_admin(method, path, access_key, secret_key, body=b"", query=""):
 
 def admin_request(method: str, path: str, access_key: str, secret_key: str,
                   body: bytes = b"", query: str = "") -> dict:
-    # Auto-split embedded query string from path (e.g. "/endpoint?foo=bar")
     if "?" in path and not query:
         path, query = path.split("?", 1)
     scheme = "https" if MINIO_SECURE else "http"
@@ -130,22 +193,24 @@ def admin_request(method: str, path: str, access_key: str, secret_key: str,
     if body: headers["Content-Type"] = "application/json"
     resp = _http.request(method, url, body=body or None, headers=headers)
     if resp.status >= 400:
-        raise RuntimeError(f"Admin API {path} → {resp.status}: {resp.data[:200].decode(errors='replace')}")
+        raise RuntimeError(f"Admin API {path} → {resp.status}")
     if resp.data:
         try: return json.loads(resp.data)
-        except Exception: return {"raw": resp.data.decode(errors="replace")}
+        except Exception: return {"raw": "binary data"}
     return {}
 
 
 # ─── JWT auth ─────────────────────────────────────────────────────────────────
 
-def create_token(username: str, is_admin: bool) -> str:
+def create_token(username: str, is_admin: bool, ak: str = None, sk: str = None) -> str:
     payload = {
         "sub":      username,
         "admin":    is_admin,
         "iat":      int(time.time()),
         "exp":      int(time.time()) + SESSION_TTL,
     }
+    if SESSION_BACKEND == "jwt" and ak and sk:
+        payload["creds"] = encrypt_creds(ak, sk)
     return pyjwt.encode(payload, SECRET_KEY, algorithm="HS256")
 
 
@@ -159,18 +224,35 @@ def decode_token(token: str) -> dict | None:
 def require_auth(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        # 1. Check CSRF for modifying methods
+        if request.method in ("POST", "PUT", "DELETE"):
+            if request.headers.get("X-Requested-With") != "XMLHttpRequest":
+                return jsonify({"error": "CSRF protection: X-Requested-With header missing"}), 403
+
+        # 2. Get token from Cookie (preferred) or Header
+        token = request.cookies.get("token")
         if not token:
-            token = request.cookies.get("token", "")
+            token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+        
         claims = decode_token(token)
         if not claims:
             return jsonify({"error": "Unauthorized"}), 401
-        request.claims = claims
+        
         request.username = claims["sub"]
         request.is_admin = claims.get("admin", False)
-        creds = _cred_cache.get(claims["sub"])
+        
+        # 3. Get Credentials
+        creds = None
+        if SESSION_BACKEND == "jwt":
+            creds_blob = claims.get("creds")
+            if creds_blob:
+                creds = decrypt_creds(creds_blob)
+        else:
+            creds = _sessions.get(claims["sub"])
+
         if not creds:
             return jsonify({"error": "Session expired, please login again"}), 401
+            
         request.minio_ak = creds["ak"]
         request.minio_sk = creds["sk"]
         request.client   = make_client(creds["ak"], creds["sk"])
@@ -190,17 +272,6 @@ def require_admin(f):
         return f(*args, **kwargs)
     return wrapper
 
-
-_cred_cache: dict[str, dict] = {}
-
-
-def _prune_creds():
-    now = time.time()
-    expired = [k for k, v in _cred_cache.items() if v.get("exp", 0) < now]
-    for k in expired:
-        del _cred_cache[k]
-
-
 # ─── STATIC ───────────────────────────────────────────────────────────────────
 
 @app.route("/")
@@ -208,6 +279,8 @@ def index():
     resp = send_from_directory(".", "ui.html")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
     return resp
 
 
@@ -218,7 +291,6 @@ def i18n(lang):
     allowed = {"en", "pl"}
     if lang not in allowed:
         return jsonify({"error": "Unknown language"}), 404
-    # Try locales/ directory next to server.py first
     script_dir = Path(__file__).parent
     for search_dir in [Path("locales"), script_dir / "locales", script_dir]:
         locale_path = search_dir / f"{lang}.json"
@@ -235,7 +307,6 @@ def i18n(lang):
 
 @app.route("/api/login", methods=["POST"])
 def login():
-    _prune_creds()
     data     = request.get_json(force=True) or {}
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
@@ -250,12 +321,20 @@ def login():
     }
     try:
         client = make_client(username, password)
-        client.list_buckets()
-    except S3Error as e:
+        # Optimized check: list_buckets might fail with AccessDenied for valid creds
+        try:
+            client.list_buckets()
+        except S3Error as e:
+            if e.code in ("AccessDenied", "AllAccessDisabled"):
+                pass # Creds are valid, just no permission to list buckets
+            elif any(code in str(e) for code in _BAD_CRED_CODES):
+                return jsonify({"error": "Invalid credentials"}), 401
+            else:
+                raise
+    except Exception as e:
         err_str = str(e)
         if any(code in err_str for code in _BAD_CRED_CODES):
             return jsonify({"error": "Invalid credentials"}), 401
-    except Exception as e:
         return jsonify({"error": f"Cannot connect to MinIO: {e}"}), 503
 
     is_admin = False
@@ -264,25 +343,33 @@ def login():
             tmp_ac = make_admin_client(username, password)
             tmp_ac.info()
             is_admin = True
-        else:
-            raise RuntimeError("no SDK")
-    except Exception as e1:
+    except Exception:
         try:
             admin_request("GET", "/info", username, password)
             is_admin = True
-        except Exception as e2:
-            app.logger.debug(f"Admin check failed (SDK: {e1}, raw: {e2})")
+        except Exception:
+            pass
 
-    _cred_cache[username] = {"ak": username, "sk": password, "exp": time.time() + SESSION_TTL}
-    token = create_token(username, is_admin)
+    _sessions.set(username, username, password, SESSION_TTL)
+    token = create_token(username, is_admin, ak=username, sk=password)
 
-    return jsonify({"token": token, "username": username, "admin": is_admin})
+    resp = jsonify({"token": token, "username": username, "admin": is_admin, "backend": SESSION_BACKEND})
+    resp.set_cookie(
+        "token", token,
+        max_age=SESSION_TTL,
+        httponly=True,
+        samesite="Lax",
+        secure=MINIO_SECURE,
+    )
+    return resp
 
 @app.route("/api/logout", methods=["POST"])
 @require_auth
 def logout():
-    _cred_cache.pop(request.username, None)
-    return jsonify({"ok": True})
+    _sessions.delete(request.username)
+    resp = jsonify({"ok": True})
+    resp.delete_cookie("token")
+    return resp
 
 
 @app.route("/api/me")
@@ -837,13 +924,22 @@ def upload_file(bucket):
     if "file" not in request.files:
         return jsonify({"error": "No file"}), 400
 
-    f    = request.files["file"]
-    key  = f"{prefix}{f.filename}"
+    f = request.files["file"]
+    key = f"{prefix}{f.filename}"
     mime = mimetypes.guess_type(f.filename)[0] or "application/octet-stream"
-    data = f.read()
+    
+    # Calculate size without reading everything into RAM
+    f.seek(0, 2)
+    size = f.tell()
+    f.seek(0)
 
     try:
-        request.client.put_object(bucket, key, io.BytesIO(data), len(data), content_type=mime)
+        request.client.put_object(
+            bucket, key, 
+            f.stream, # Use the stream directly
+            size, 
+            content_type=mime
+        )
         return jsonify({"uploaded": key}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
