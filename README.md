@@ -76,19 +76,20 @@ Fill in `.env`:
 ```env
 MINIO_ENDPOINT=https://s3.example.com
 SECRET_KEY=your-long-random-jwt-secret
+ENCRYPTION_KEY=your-long-random-aes-key
 PORT=7474
 WEBUI_HOST=https://minio-dash.example.com
 GUNICORN_WORKERS=2
 GUNICORN_THREADS=1
 ```
 
-Generate a secure `SECRET_KEY`:
+Generate secure secrets for `SECRET_KEY` and `ENCRYPTION_KEY`:
 
 ```bash
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-> **Note:** If `SECRET_KEY` is not set, a random secret is generated on every startup — existing sessions will be invalidated on each restart.
+> **Note:** `SECRET_KEY` and `ENCRYPTION_KEY` are **both required** — the server exits with an error at startup if either is missing (unless `DEBUG=1` is set, which uses insecure dev-only defaults). They are **not** auto-generated. Use a persistent value so sessions survive restarts.
 
 ### 2. Run
 
@@ -249,8 +250,8 @@ server {
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `MINIO_ENDPOINT` | ✅ | `localhost:9000` | MinIO endpoint (with or without `https://`) |
-| `SECRET_KEY` | ✅ | auto-generated | JWT signing secret — **set this in production** |
-| `ENCRYPTION_KEY` | ✅ | auto-generated | AES key for encrypting S3 creds in JWT mode |
+| `SECRET_KEY` | ✅ | _(none — required)_ | JWT signing secret — server exits if unset (unless `DEBUG=1`) |
+| `ENCRYPTION_KEY` | ✅ | _(none — required)_ | AES key for encrypting S3 creds — server exits if unset (unless `DEBUG=1`) |
 | `SESSION_BACKEND`| ❌ | `jwt` | Session storage: `jwt` (stateless) or `redis` (stateful) |
 | `REDIS_URL` | ⚠️ | None | Required if `SESSION_BACKEND=redis` |
 | `PORT` | ❌ | `7474` | HTTP port to listen on |
@@ -258,7 +259,7 @@ server {
 | `GUNICORN_WORKERS` | ❌ | `2` | Number of Gunicorn worker processes |
 | `GUNICORN_THREADS` | ❌ | `1` | Number of threads per worker |
 
-> **Security Note:** If `SECRET_KEY` or `ENCRYPTION_KEY` are not set, they are generated randomly on each startup. This will invalidate all active sessions when the server restarts.
+> **Security Note:** `SECRET_KEY` and `ENCRYPTION_KEY` are mandatory. If either is missing the server refuses to start (exits with an error) unless `DEBUG=1` is set, which falls back to insecure hardcoded keys for local development only — never use `DEBUG=1` in production.
 
 ---
 

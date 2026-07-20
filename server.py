@@ -3,20 +3,23 @@
 minio-dash v2  –  Full S3 Admin Dashboard
 No mc CLI needed – uses MinIO Python SDK + admin REST API directly.
 
-Env vars (only ONE required):
+Env vars (required unless DEBUG=1):
   MINIO_ENDPOINT   – e.g. s3.racis.dev  or  http://localhost:9000
-  SECRET_KEY       – JWT secret (auto-generated if not set)
+  SECRET_KEY       – JWT signing secret (required; no insecure fallback)
+  ENCRYPTION_KEY   – AES-256 key material for stored creds (required; no insecure fallback)
   PORT             – HTTP port (default: 7474)
+  REDIS_URL        – optional; enables Redis-backed sessions
+  DEBUG            – set to 1 to allow insecure dev key fallbacks
 
 Run:
-  pip install flask minio PyJWT
-  MINIO_ENDPOINT=s3.racis.dev python server.py
+  pip install -r requirements.txt
+  MINIO_ENDPOINT=s3.racis.dev SECRET_KEY=... ENCRYPTION_KEY=... python server.py
 """
 
-import os, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct, datetime
+import os, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct, datetime, threading
 from pathlib import Path
 from functools import wraps
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 
@@ -29,6 +32,7 @@ try:
     import jwt as pyjwt
     from Crypto.Cipher import AES
     from Crypto.Protocol.KDF import PBKDF2
+    from Crypto.Hash import SHA256, HMAC
 except ImportError as e:
     raise SystemExit(f"Missing dependency: {e}. Run: pip install -r requirements.txt")
 
@@ -55,19 +59,32 @@ REDIS_URL        = os.environ.get("REDIS_URL")
 SESSION_BACKEND  = os.environ.get("SESSION_BACKEND", "jwt").lower() # jwt or redis
 PORT             = int(os.environ.get("PORT", 7474))
 SESSION_TTL      = 8 * 3600   # 8 hours
+# DEBUG must be explicitly opted-in; it enables dev-only conveniences that are
+# unsafe in production (insecure key fallbacks, the /api/debug-users endpoint).
+DEBUG            = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes", "on")
 
 if not SECRET_KEY or not ENC_KEY_RAW:
     print("CRITICAL: SECRET_KEY and ENCRYPTION_KEY must be set in environment!")
     print(f"Generated SECRET_KEY suggestion: {secrets.token_hex(32)}")
     print(f"Generated ENCRYPTION_KEY suggestion: {secrets.token_hex(16)}")
-    if os.environ.get("KUBERNETES_SERVICE_HOST"): # Fail fast in K8s
-        raise SystemExit("Missing required security environment variables")
+    if not DEBUG:
+        # Fail fast everywhere unless DEBUG is explicitly enabled. Falling back to
+        # a hardcoded key would let anyone forge JWTs and decrypt stored creds.
+        raise SystemExit(
+            "Missing required security environment variables SECRET_KEY / ENCRYPTION_KEY "
+            "(set DEBUG=1 to allow insecure dev defaults)"
+        )
+    print("WARNING: DEBUG mode — using insecure hardcoded keys. DO NOT use in production.")
 
 SECRET_KEY = SECRET_KEY or "dev-only-secret-key"
 ENC_KEY_RAW = ENC_KEY_RAW or "dev-only-encryption-key"
 
 # Derive a proper 32-byte key for AES-256
-_enc_key = PBKDF2(ENC_KEY_RAW, b"minio-dash-salt-v1", dkLen=32, count=1000)
+# PBKDF2-HMAC-SHA256, 600k iterations (per OWASP guidance)
+_enc_key = PBKDF2(
+    ENC_KEY_RAW, b"minio-dash-salt-v1", dkLen=32, count=600000,
+    prf=lambda p, s: HMAC.new(p, s, SHA256).digest(),
+)
 
 _parsed = urlparse(_raw_endpoint if "://" in _raw_endpoint else "https://" + _raw_endpoint)
 MINIO_HOST   = _parsed.netloc or _raw_endpoint.rstrip("/")
@@ -152,7 +169,8 @@ def make_admin_client(access_key: str, secret_key: str):
     params = set(sig.parameters.keys())
     kwargs = {"endpoint": MINIO_HOST, "credentials": creds, "secure": MINIO_SECURE}
     if "cert_check" in params:
-        kwargs["cert_check"] = False
+        # Only skip TLS verification for plain-HTTP endpoints, matching make_client.
+        kwargs["cert_check"] = not MINIO_SECURE
     return MinioAdmin(**kwargs)
 
 
@@ -181,6 +199,13 @@ def _sign_v4_admin(method, path, access_key, secret_key, body=b"", query=""):
         "Authorization": f"AWS4-HMAC-SHA256 Credential={access_key}/{cred_scope},SignedHeaders={signed_hdrs},Signature={sig}",
         "x-amz-date": amz_date, "x-amz-content-sha256": payload_hash, "Host": host,
     }
+
+def _q(value) -> str:
+    """URL-encode a value for safe insertion into an admin API query string.
+    Prevents names containing & ? = etc. from injecting extra query params or
+    breaking the SigV4 signature (the query string is part of the signed payload)."""
+    return quote(str(value), safe="")
+
 
 def admin_request(method: str, path: str, access_key: str, secret_key: str,
                   body: bytes = b"", query: str = "") -> dict:
@@ -221,13 +246,45 @@ def decode_token(token: str) -> dict | None:
         return None
 
 
+def _issue_csrf_cookie(resp):
+    """Set a fresh CSRF token cookie (readable by JS for the double-submit check)."""
+    token = secrets.token_urlsafe(32)
+    resp.set_cookie(
+        "csrf_token", token,
+        max_age=SESSION_TTL,
+        httponly=False,      # must be readable by JS to echo back in X-CSRF-Token
+        samesite="Lax",
+        secure=MINIO_SECURE,
+    )
+    return resp
+
+
+def _csrf_ok() -> bool:
+    """Double-submit CSRF check: the X-CSRF-Token header must match the cookie.
+    A cross-site attacker cannot read the cookie value, so cannot forge the header."""
+    cookie = request.cookies.get("csrf_token", "")
+    header = request.headers.get("X-CSRF-Token", "")
+    return bool(cookie) and bool(header) and hmac.compare_digest(cookie, header)
+
+
+def require_csrf(f):
+    """Enforce the CSRF token on GET endpoints that return sensitive data
+    (require_auth only guards mutating methods)."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not _csrf_ok():
+            return jsonify({"error": "CSRF token missing or invalid"}), 403
+        return f(*args, **kwargs)
+    return wrapper
+
+
 def require_auth(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        # 1. Check CSRF for modifying methods
+        # 1. Check CSRF for modifying methods (double-submit token)
         if request.method in ("POST", "PUT", "DELETE"):
-            if request.headers.get("X-Requested-With") != "XMLHttpRequest":
-                return jsonify({"error": "CSRF protection: X-Requested-With header missing"}), 403
+            if not _csrf_ok():
+                return jsonify({"error": "CSRF token missing or invalid"}), 403
 
         # 2. Get token from Cookie (preferred) or Header
         token = request.cookies.get("token")
@@ -264,10 +321,63 @@ def require_auth(f):
     return wrapper
 
 
+# Short-lived cache of admin-liveness checks so we don't hit MinIO /info on every
+# admin request (the permission matrix already fans out N calls per request). A
+# demoted admin is rejected within ADMIN_VERIFY_TTL seconds rather than instantly.
+ADMIN_VERIFY_TTL = 45  # seconds
+_admin_verify_cache: dict = {}
+_admin_verify_lock = threading.Lock()
+
+
+def _verify_admin_live() -> bool:
+    """Re-check that the caller still holds MinIO admin rights right now, instead of
+    trusting the 'admin' claim frozen into the JWT (valid up to SESSION_TTL). If an
+    admin is demoted in MinIO, this makes the panel/API reject them within
+    ADMIN_VERIFY_TTL seconds. Results are cached per-credential to avoid an /info
+    round-trip on every admin request."""
+    ak = getattr(request, "minio_ak", None)
+    sk = getattr(request, "minio_sk", None)
+    cache_key = hashlib.sha256(f"{ak}\x00{sk}".encode()).hexdigest() if ak else None
+    now = time.time()
+    if cache_key:
+        with _admin_verify_lock:
+            hit = _admin_verify_cache.get(cache_key)
+            if hit and hit[0] > now:
+                return hit[1]
+
+    result = _do_verify_admin_live()
+
+    if cache_key:
+        with _admin_verify_lock:
+            _admin_verify_cache[cache_key] = (now + ADMIN_VERIFY_TTL, result)
+            # Opportunistically evict expired entries so the dict can't grow unbounded.
+            if len(_admin_verify_cache) > 512:
+                for k, (exp, _) in list(_admin_verify_cache.items()):
+                    if exp <= now:
+                        _admin_verify_cache.pop(k, None)
+    return result
+
+
+def _do_verify_admin_live() -> bool:
+    ac = getattr(request, "admin_client", None)
+    try:
+        if ac and _HAS_MINIOADMIN:
+            ac.info()
+            return True
+    except Exception:
+        pass
+    try:
+        admin_request("GET", "/info", request.minio_ak, request.minio_sk)
+        return True
+    except Exception:
+        return False
+
+
 def require_admin(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if not request.is_admin:
+        if not request.is_admin or not _verify_admin_live():
+            request.is_admin = False
             return jsonify({"error": "Admin required"}), 403
         return f(*args, **kwargs)
     return wrapper
@@ -361,6 +471,7 @@ def login():
         samesite="Lax",
         secure=MINIO_SECURE,
     )
+    _issue_csrf_cookie(resp)
     return resp
 
 @app.route("/api/logout", methods=["POST"])
@@ -375,7 +486,15 @@ def logout():
 @app.route("/api/me")
 @require_auth
 def me():
-    return jsonify({"username": request.username, "admin": request.is_admin})
+    # Report the *live* admin status (not the possibly-stale JWT claim) so the UI
+    # only shows admin panels to users who still have admin rights in MinIO.
+    live_admin = bool(request.is_admin) and _verify_admin_live()
+    resp = jsonify({"username": request.username, "admin": live_admin})
+    # Refresh the CSRF cookie so an auto-logged-in session (valid token cookie but
+    # no/expired csrf cookie) can perform mutating requests without re-login.
+    if not request.cookies.get("csrf_token"):
+        _issue_csrf_cookie(resp)
+    return resp
 
 
 # ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -451,7 +570,7 @@ def _sdk_user_info_single(ac, username: str, ak: str, sk: str) -> dict:
     """
     # Try raw admin request first (returns plaintext for user-info)
     try:
-        raw = admin_request("GET", f"/user-info?accessKey={username}", ak, sk)
+        raw = admin_request("GET", f"/user-info?accessKey={_q(username)}", ak, sk)
         if isinstance(raw, dict) and "status" in raw:
             return {
                 "status": raw.get("status", "unknown"),
@@ -488,7 +607,7 @@ def get_stats():
     disabled_count = 0
     used_bytes = 0
 
-    if request.is_admin:
+    if request.is_admin and _verify_admin_live():
         try:
             ac = request.admin_client
             if ac and _HAS_MINIOADMIN:
@@ -549,7 +668,7 @@ def list_policies():
 @require_admin
 def get_policy(name):
     try:
-        data = admin_request("GET", f"/info-canned-policy?name={name}", request.minio_ak, request.minio_sk)
+        data = admin_request("GET", f"/info-canned-policy?name={_q(name)}", request.minio_ak, request.minio_sk)
         return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -571,7 +690,7 @@ def create_policy():
         if ac and _HAS_MINIOADMIN:
             ac.policy_add(name, policy=policy)
         else:
-            admin_request("PUT", f"/add-canned-policy?name={name}",
+            admin_request("PUT", f"/add-canned-policy?name={_q(name)}",
                           request.minio_ak, request.minio_sk, body=json.dumps(policy).encode())
         return jsonify({"name": name}), 201
     except Exception as e:
@@ -587,7 +706,7 @@ def delete_policy(name):
         if ac and _HAS_MINIOADMIN:
             ac.policy_remove(name)
         else:
-            admin_request("DELETE", f"/remove-canned-policy?name={name}", request.minio_ak, request.minio_sk)
+            admin_request("DELETE", f"/remove-canned-policy?name={_q(name)}", request.minio_ak, request.minio_sk)
         return jsonify({"deleted": name})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -599,6 +718,9 @@ def delete_policy(name):
 @require_auth
 @require_admin
 def debug_users():
+    # Diagnostic endpoint: leaks raw SDK internals. Only available in DEBUG mode.
+    if not DEBUG:
+        return jsonify({"error": "Not found"}), 404
     result = {}
     ak, sk = request.minio_ak, request.minio_sk
     ac = request.admin_client
@@ -671,7 +793,7 @@ def create_user():
             ac.user_add(username, password)
         else:
             body = json.dumps({"secretKey": password, "status": "enabled"}).encode()
-            admin_request("PUT", f"/add-user?accessKey={username}", request.minio_ak, request.minio_sk, body=body)
+            admin_request("PUT", f"/add-user?accessKey={_q(username)}", request.minio_ak, request.minio_sk, body=body)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -702,7 +824,7 @@ def delete_user(username):
         if ac and _HAS_MINIOADMIN:
             ac.user_remove(username)
         else:
-            admin_request("DELETE", f"/remove-user?accessKey={username}", request.minio_ak, request.minio_sk)
+            admin_request("DELETE", f"/remove-user?accessKey={_q(username)}", request.minio_ak, request.minio_sk)
         return jsonify({"deleted": username})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -717,7 +839,7 @@ def enable_user(username):
         if ac and _HAS_MINIOADMIN:
             ac.user_enable(username)
         else:
-            admin_request("PUT", f"/set-user-status?accessKey={username}&status=enabled", request.minio_ak, request.minio_sk)
+            admin_request("PUT", f"/set-user-status?accessKey={_q(username)}&status=enabled", request.minio_ak, request.minio_sk)
         return jsonify({"status": "enabled", "username": username})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -732,7 +854,7 @@ def disable_user(username):
         if ac and _HAS_MINIOADMIN:
             ac.user_disable(username)
         else:
-            admin_request("PUT", f"/set-user-status?accessKey={username}&status=disabled", request.minio_ak, request.minio_sk)
+            admin_request("PUT", f"/set-user-status?accessKey={_q(username)}&status=disabled", request.minio_ak, request.minio_sk)
         return jsonify({"status": "disabled", "username": username})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -809,14 +931,30 @@ def set_user_policies(username):
 @require_admin
 def reset_password(username):
     password = _gen_password()
+    # user_add / add-user re-enables the account as a side effect. Capture the
+    # current status first so a disabled user stays disabled after a reset.
+    try:
+        info = _sdk_user_info_single(request.admin_client, username, request.minio_ak, request.minio_sk)
+        prev_status = str(info.get("status", "enabled")).lower()
+    except Exception:
+        prev_status = "enabled"
+    was_disabled = prev_status == "disabled"
+
     try:
         ac = request.admin_client
         if ac and _HAS_MINIOADMIN:
             ac.user_add(username, password)
+            if was_disabled:
+                ac.user_disable(username)
         else:
-            body = json.dumps({"secretKey": password, "status": "enabled"}).encode()
-            admin_request("PUT", f"/add-user?accessKey={username}", request.minio_ak, request.minio_sk, body=body)
-        return jsonify({"username": username, "password": password})
+            status = "disabled" if was_disabled else "enabled"
+            body = json.dumps({"secretKey": password, "status": status}).encode()
+            admin_request("PUT", f"/add-user?accessKey={_q(username)}", request.minio_ak, request.minio_sk, body=body)
+        return jsonify({
+            "username": username,
+            "password": password,
+            "status": "disabled" if was_disabled else "enabled",
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -947,6 +1085,7 @@ def upload_file(bucket):
 
 @app.route("/api/buckets/<bucket>/files/view")
 @require_auth
+@require_csrf
 def view_file(bucket):
     key = request.args.get("key", "")
     if not key:
@@ -978,6 +1117,7 @@ def view_file(bucket):
 
 @app.route("/api/buckets/<bucket>/files/download")
 @require_auth
+@require_csrf
 def download_file(bucket):
     key = request.args.get("key", "")
     if not key:
@@ -1154,7 +1294,7 @@ def permission_matrix():
     policy_access: dict[str, dict[str, str]] = {}
     for pname in policies:
         try:
-            pdata = admin_request("GET", f"/info-canned-policy?name={pname}",
+            pdata = admin_request("GET", f"/info-canned-policy?name={_q(pname)}",
                                   request.minio_ak, request.minio_sk)
             policy_access[pname] = _parse_policy_access(pdata, buckets)
         except Exception:
@@ -1294,7 +1434,7 @@ def set_bucket_access(username):
         if ac and _HAS_MINIOADMIN:
             ac.policy_add(policy_name, policy=policy_doc)
         else:
-            admin_request("PUT", f"/add-canned-policy?name={policy_name}",
+            admin_request("PUT", f"/add-canned-policy?name={_q(policy_name)}",
                           request.minio_ak, request.minio_sk, body=json.dumps(policy_doc).encode())
     except Exception as e:
         return jsonify({"error": f"Failed to create policy: {e}"}), 500

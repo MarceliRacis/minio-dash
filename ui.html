@@ -662,12 +662,22 @@ const I18N = {
 function t(key, vars) { return I18N.get(key, vars); }
 
 // ═══════ API ═══════
+function getCookie(name) {
+  return document.cookie.split('; ').reduce((acc, c) => {
+    const [k, ...v] = c.split('=');
+    return k === name ? decodeURIComponent(v.join('=')) : acc;
+  }, '');
+}
+function csrfHeaders(extra) {
+  return Object.assign({
+    'X-Requested-With': 'XMLHttpRequest',
+    'X-CSRF-Token': getCookie('csrf_token')
+  }, extra || {});
+}
 async function api(method, path, body, raw=false) {
-  const opts = { 
-    method, 
-    headers: { 
-      'X-Requested-With': 'XMLHttpRequest'
-    } 
+  const opts = {
+    method,
+    headers: csrfHeaders()
   };
   if (body && !(body instanceof FormData)) {
     opts.headers['Content-Type'] = 'application/json';
@@ -1359,7 +1369,7 @@ async function uploadFiles(files) {
 
 async function downloadFile(key) {
   const url=`/api/buckets/${encodeURIComponent(S.currentBucket)}/files/download?key=${encodeURIComponent(key)}`;
-  const r=await fetch(url,{headers:{'X-Requested-With': 'XMLHttpRequest'}});
+  const r=await fetch(url,{headers:csrfHeaders()});
   if (!r.ok) { toast(t('files.downloadFailed',{msg:r.statusText}),'error'); return; }
   const blob=await r.blob();
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=key.split('/').pop(); a.click(); URL.revokeObjectURL(a.href);
@@ -1459,7 +1469,7 @@ async function showTextPreviewCont(url,cont) {
 }
 
 async function fetchWithAuth(url) {
-  const r=await fetch(url,{headers:{'X-Requested-With': 'XMLHttpRequest'}});
+  const r=await fetch(url,{headers:csrfHeaders()});
   if (!r.ok) throw new Error(await r.text());
   return r.blob();
 }
