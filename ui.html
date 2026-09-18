@@ -24,6 +24,11 @@ body{font-family:var(--sans);background:var(--bg0);color:var(--text0);font-size:
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
 
 /* LOGIN */
+#preview-banner{display:none;flex-shrink:0;align-items:center;gap:10px;justify-content:center;padding:8px 16px;background:#3b2f00;color:#ffd75e;border-bottom:1px solid #6b5400;font-size:13px;line-height:1.4;text-align:center}
+#preview-banner b{color:#fff}
+#preview-banner a{color:#ffd75e;text-decoration:underline}
+#login-preview{display:none;margin:0 0 14px;padding:10px 12px;background:#3b2f00;color:#ffd75e;border:1px solid #6b5400;border-radius:var(--r);font-size:12.5px;line-height:1.5;text-align:left}
+#login-preview b{color:#fff}
 #login-screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:var(--bg0);z-index:1000}
 .login-card{width:360px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);padding:40px 36px}
 .login-logo{font-weight:800;font-size:22px;letter-spacing:-.5px;margin-bottom:8px}
@@ -259,6 +264,12 @@ body.no-admin #page-policies { display: none !important; }
   <div class="login-card">
     <div class="login-logo">minio<span>dash</span></div>
     <div class="login-sub" id="login-endpoint"><span data-i18n="login.connecting">connecting…</span></div>
+    <div id="login-preview">
+      <b>Preview mode.</b> This demo runs on a disposable in-memory sandbox —
+      no MinIO server, no real data. Sign in with anything (or leave the fields
+      blank) and click around: everything you change is yours alone and is
+      thrown away when the session expires.
+    </div>
     <div class="login-field"><label data-i18n="login.accessKey">Access Key</label><input type="text" id="login-user" data-i18n-placeholder="login.accessKeyPlaceholder" autocomplete="username"></div>
     <div class="login-field"><label data-i18n="login.secretKey">Secret Key</label><input type="password" id="login-pass" autocomplete="current-password" placeholder="••••••••••••"></div>
     <button class="login-btn" id="login-btn" data-i18n="login.signIn">Sign in →</button>
@@ -267,6 +278,9 @@ body.no-admin #page-policies { display: none !important; }
 </div>
 
 <div id="app">
+  <div id="preview-banner">
+    <span><b>Preview mode</b> — disposable sandbox, no real MinIO behind it. Changes are yours alone and are discarded.</span>
+  </div>
   <div id="topbar">
     <button id="menu-toggle" onclick="toggleSidebar()">☰</button>
     <div class="topbar-logo">minio<span>dash</span></div>
@@ -599,7 +613,7 @@ body.no-admin #page-policies { display: none !important; }
 // ═══════ STATE ═══════
 const S = {
   token: localStorage.getItem('token') || '',
-  user: null, isAdmin: false, endpoint: '',
+  user: null, isAdmin: false, endpoint: '', preview: false,
   buckets: [], currentBucket: null, currentPrefix: '',
   fileView: localStorage.getItem('fileView') || 'list',
   allPolicies: [],
@@ -615,7 +629,9 @@ const BUNDLED_I18N = {"en": {"login": {"connecting": "connecting…", "accessKey
 
 // ═══════ I18N ═══════
 const I18N = {
-  lang: localStorage.getItem('lang') || (navigator.language.startsWith('pl') ? 'pl' : 'en'),
+  // Default to English regardless of browser locale — auto-switching to PL
+  // surprised users who don't read it. The toggle persists their choice.
+  lang: localStorage.getItem('lang') || 'en',
   data: {},
   async load(lang) {
     // Try server first, fall back to bundled translations
@@ -712,6 +728,23 @@ async function initEndpoint() {
   });
 }
 
+async function initPreviewMode() {
+  // /api/config is unauthenticated — the login screen has to know whether this
+  // deployment is a public demo before anyone has a session.
+  try {
+    const r = await fetch('/api/config');
+    if (!r.ok) return;
+    S.preview = (await r.json()).preview === true;
+  } catch { S.preview = false; }
+  if (!S.preview) return;
+  const notice = document.getElementById('login-preview');
+  if (notice) notice.style.display = 'block';
+  const banner = document.getElementById('preview-banner');
+  if (banner) banner.style.display = 'flex';
+  const btn = document.getElementById('login-btn');
+  if (btn) btn.textContent = 'Enter preview →';
+}
+
 async function tryAutoLogin() {
   if (!S.token) return false;
   try {
@@ -730,7 +763,7 @@ async function doLogin() {
   const pass = document.getElementById('login-pass').value;
   const errEl = document.getElementById('login-err');
   const btn   = document.getElementById('login-btn');
-  if (!user || !pass) { showLoginErr(t('login.errorEmpty')); return; }
+  if (!S.preview && (!user || !pass)) { showLoginErr(t('login.errorEmpty')); return; }
   btn.textContent = t('login.signingIn'); btn.disabled = true; errEl.style.display = 'none';
   try {
     const r = await fetch('/api/login', {
@@ -743,7 +776,10 @@ async function doLogin() {
     localStorage.setItem('token', S.token);
     showApp();
   } catch(e) { showLoginErr(e.message); }
-  finally { btn.textContent = t('login.signIn'); btn.disabled = false; }
+  finally {
+    btn.textContent = S.preview ? 'Enter preview →' : t('login.signIn');
+    btn.disabled = false;
+  }
 }
 
 function showLoginErr(msg) {
@@ -1526,6 +1562,7 @@ function copyText(text) { navigator.clipboard.writeText(text).then(()=>toast(t('
     I18N.apply();
   }
   await initEndpoint();
+  await initPreviewMode();
   const ok=await tryAutoLogin();
   if (ok) showApp();
   window.addEventListener('hashchange',()=>{

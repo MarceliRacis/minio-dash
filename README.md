@@ -6,6 +6,7 @@
 
 [![License](https://img.shields.io/badge/License-MIT-red?style=for-the-badge)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/MarceliRacis/minio-dash?style=for-the-badge&color=red&logo=git&logoColor=white)](https://github.com/MarceliRacis/minio-dash/commits/main)
+[![Tests](https://img.shields.io/badge/Tests-129%20passing-2ea043?style=for-the-badge&logo=pytest&logoColor=white)](tests/)
 [![Docker](https://img.shields.io/badge/Docker-multi--arch-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com)
 [![Python](https://img.shields.io/badge/Python-Flask-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://flask.palletsprojects.com)
 
@@ -13,13 +14,16 @@
 [![JWT](https://img.shields.io/badge/Auth-JWT%20HS256-000000?style=for-the-badge&logo=jsonwebtokens&logoColor=white)](https://jwt.io)
 [![Gunicorn](https://img.shields.io/badge/Server-Gunicorn-499848?style=for-the-badge&logo=gunicorn&logoColor=white)](https://gunicorn.org)
 
+[![Project Page](https://img.shields.io/badge/Project-racis.dev-red?style=for-the-badge&logo=firefox&logoColor=white)](https://racis.dev/works/minio-dash)
 [![GitLab](https://img.shields.io/badge/GitLab-Original%20Repo-609926?style=for-the-badge&logo=gitlab&logoColor=white)](https://git.racis.dev/marceliracis/minio-dash)
 [![GitHub Mirror](https://img.shields.io/badge/GitHub-Mirror-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/MarceliRacis/minio-dash)
 
 A web-based admin panel for MinIO — manage buckets, files, users, policies and permissions directly in the browser.
 Uses the MinIO Python SDK and admin REST API with AWS Signature V4 signing. No external tools required.
 
-[**GitLab (source)**](https://git.racis.dev/marceliracis/minio-dash) · [**GitHub (mirror)**](https://github.com/MarceliRacis/minio-dash)
+[**Project page**](https://racis.dev/works/minio-dash) · [**GitLab (source)**](https://git.racis.dev/marceliracis/minio-dash) · [**GitHub (mirror)**](https://github.com/MarceliRacis/minio-dash)
+
+[Roadmap](ROADMAP.md) · [Contributing](CONTRIBUTING.md) · [Try it without a MinIO server](#preview-mode)
 
 </div>
 
@@ -30,19 +34,19 @@ Uses the MinIO Python SDK and admin REST API with AWS Signature V4 signing. No e
 <div align="center">
 
 **Login**
-<img src="https://api.racis.dev/api/upload/file/776c2102-556c-451e-9690-eb4307b428e6.png" alt="Login" width="100%" />
+<img src="screens/minio_log_in.png" alt="Login" width="100%" />
 
 **Dashboard**
-<img src="https://api.racis.dev/api/upload/file/77123bea-e03c-4aa2-aa84-27fb70f134e4.png" alt="Dashboard" width="100%" />
+<img src="screens/minio_home.png" alt="Dashboard" width="100%" />
 
 **Users**
-<img src="https://api.racis.dev/api/upload/file/58a827b1-3e88-494e-898c-af2734b24525.png" alt="Users" width="100%" />
+<img src="screens/minio_users.png" alt="Users" width="100%" />
 
 **Permission Matrix**
-<img src="https://api.racis.dev/api/upload/file/59dc573c-7edf-4fd2-8515-ba8ea4197bc6.png" alt="Permission Matrix" width="100%" />
+<img src="screens/minio_matrix.png" alt="Permission Matrix" width="100%" />
 
 **Policies**
-<img src="https://api.racis.dev/api/upload/file/8cfcf130-3f35-41ea-a0d7-37bdbef2790b.png" alt="Policies" width="100%" />
+<img src="screens/minio_politics.png" alt="Policies" width="100%" />
 
 </div>
 
@@ -59,6 +63,8 @@ Uses the MinIO Python SDK and admin REST API with AWS Signature V4 signing. No e
 - **JWT authentication** — login with MinIO access key + secret key; sessions last 8 hours
 - **Admin auto-detection** — automatically detects if the logged-in user has admin privileges
 - **i18n** — English and Polish UI (🇬🇧 / 🇵🇱)
+- **Preview mode** — `MODE=PREVIEW` runs the whole panel against a disposable in-memory sandbox, so you can demo or evaluate it without a MinIO server
+- **Tested** — 129 automated tests covering auth, SigV4 signing, crypto and policy parsing; CI blocks the image build if they fail
 - **Multi-arch Docker image** — runs on both `amd64` and `arm64`
 
 ---
@@ -68,10 +74,14 @@ Uses the MinIO Python SDK and admin REST API with AWS Signature V4 signing. No e
 ### 1. Configure environment
 
 ```bash
-cp .env.example .env
+python server.py --init-env
 ```
 
-Fill in `.env`:
+That writes a ready-to-run `.env` with freshly generated `SECRET_KEY` and
+`ENCRYPTION_KEY` (mode `0600`), so the only thing left to set is your
+`MINIO_ENDPOINT`. It refuses to overwrite an existing `.env`.
+
+Prefer to do it by hand? `cp .env.example .env` and fill in:
 
 ```env
 MINIO_ENDPOINT=https://s3.example.com
@@ -80,13 +90,14 @@ ENCRYPTION_KEY=your-long-random-aes-key
 PORT=7474
 WEBUI_HOST=https://minio-dash.example.com
 GUNICORN_WORKERS=2
-GUNICORN_THREADS=1
+GUNICORN_THREADS=8
 ```
 
-Generate secure secrets for `SECRET_KEY` and `ENCRYPTION_KEY`:
+Generating those two by hand:
 
 ```bash
-python -c "import secrets; print(secrets.token_hex(32))"
+python -c "import secrets; print(secrets.token_hex(32))"   # SECRET_KEY
+python -c "import secrets; print(secrets.token_hex(16))"   # ENCRYPTION_KEY
 ```
 
 > **Note:** `SECRET_KEY` and `ENCRYPTION_KEY` are **both required** — the server exits with an error at startup if either is missing (unless `DEBUG=1` is set, which uses insecure dev-only defaults). They are **not** auto-generated. Use a persistent value so sessions survive restarts.
@@ -113,7 +124,7 @@ docker run -d \
   -e PORT=7474 \
   -e WEBUI_HOST=https://minio-dash.example.com \
   -e GUNICORN_WORKERS=2 \
-  -e GUNICORN_THREADS=1 \
+  -e GUNICORN_THREADS=8 \
   registry.racis.dev/marceliracis/minio-dash:latest
 ```
 
@@ -245,6 +256,43 @@ server {
 
 ---
 
+## Preview mode
+
+Want to see what the panel does before wiring it to your own MinIO? Run it in
+preview mode:
+
+```bash
+MODE=PREVIEW python server.py
+# or
+docker run -d -p 7474:7474 -e MODE=PREVIEW \
+  registry.racis.dev/marceliracis/minio-dash:latest
+```
+
+No `MINIO_ENDPOINT`, no secrets, no MinIO server. The whole panel runs against
+an in-memory stand-in (`preview.py`) seeded with demo buckets, files, users and
+IAM policies. Sign in with anything — or nothing — and click around: create
+buckets, upload files, edit the permission matrix, reset passwords. Everything
+works, and none of it is real.
+
+How it behaves:
+
+- **Every visitor gets their own sandbox.** Nothing you do is visible to anyone
+  else, and each sign-in starts from clean demo data.
+- **Nothing persists.** Sandboxes live in RAM, expire after two hours of
+  inactivity, and vanish on restart.
+- **No MinIO connection is ever opened.** The real client is never constructed;
+  there is a test asserting exactly that.
+- **Secrets are optional.** If `SECRET_KEY` / `ENCRYPTION_KEY` are unset,
+  ephemeral ones are generated for the process.
+
+Because sandbox state lives in the process's memory, preview mode forces
+`workers=1` and scales with threads instead.
+
+> Preview mode is for demos and evaluation. It is not a MinIO emulator, and it
+> implements only the operations this panel calls.
+
+---
+
 ## Environment Variables
 
 | Variable | Required | Default | Description |
@@ -257,7 +305,9 @@ server {
 | `PORT` | ❌ | `7474` | HTTP port to listen on |
 | `WEBUI_HOST` | ❌ | `http://localhost:7474` | Public URL shown in startup banner |
 | `GUNICORN_WORKERS` | ❌ | `2` | Number of Gunicorn worker processes |
-| `GUNICORN_THREADS` | ❌ | `1` | Number of threads per worker |
+| `GUNICORN_THREADS` | ❌ | `8` | Threads per worker. Requests spend most of their time waiting on MinIO, so threads are what give you concurrency — a large upload occupies its thread for the whole transfer |
+| `MODE` | ❌ | _(none)_ | Set to `PREVIEW` to run against a disposable in-memory sandbox instead of a real MinIO server (see [Preview mode](#preview-mode)) |
+| `DEBUG` | ❌ | _(off)_ | Dev only. Enables insecure key fallbacks and the `/api/debug-users` endpoint. Never set in production |
 
 > **Security Note:** `SECRET_KEY` and `ENCRYPTION_KEY` are mandatory. If either is missing the server refuses to start (exits with an error) unless `DEBUG=1` is set, which falls back to insecure hardcoded keys for local development only — never use `DEBUG=1` in production.
 
@@ -339,12 +389,45 @@ minio-dash/
 ├── docker-compose.yml
 ├── .env.example
 ├── requirements.txt
+├── requirements-dev.txt        # + test dependencies
 ├── server.py                   # Flask app — all routes, JWT auth, MinIO SDK
+├── preview.py                  # In-memory MinIO stand-in for MODE=PREVIEW
 ├── ui.html                     # Single-file frontend (HTML + CSS + JS)
-└── locales/
-    ├── en.json                 # English translations
-    └── pl.json                 # Polish translations
+├── locales/
+│   ├── en.json                 # English translations
+│   └── pl.json                 # Polish translations
+├── screens/                    # Screenshots used in this README
+└── tests/                      # pytest suite — no MinIO or network needed
+    ├── test_auth.py            # JWT, CSRF, endpoint guards
+    ├── test_crypto.py          # AES-GCM sealing, key derivation
+    ├── test_sigv4.py           # Admin API request signing
+    ├── test_policy_parsing.py  # Permission matrix logic
+    ├── test_endpoints.py       # Routing, i18n, login validation
+    └── test_preview.py         # Preview sandbox
 ```
+
+---
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+129 tests, roughly two seconds, no MinIO server, no Redis and no network
+required. CI runs them on every push that touches code, and a failing suite
+blocks the Docker image build.
+
+The suite deliberately concentrates on the parts that are hand-written and
+security-relevant rather than chasing a coverage number: AES-GCM credential
+sealing and its key derivation, JWT issuing and rejection (expired, wrong
+secret, `alg: none`), the CSRF double-submit check, the auth and admin guards in
+front of every endpoint, AWS SigV4 request signing for the MinIO admin API, and
+the IAM policy parsing behind the permission matrix.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for what to be careful about when
+changing them.
 
 ---
 
@@ -373,6 +456,53 @@ docker exec -it minio-dash sh
 docker build -t registry.racis.dev/marceliracis/minio-dash:latest .
 docker push registry.racis.dev/marceliracis/minio-dash:latest
 ```
+
+---
+
+## Project status
+
+Worth being straight about, since it is a fair thing to ask before you run
+someone's admin panel against your storage.
+
+**This is a single-maintainer project.** It is built and maintained by one
+person, in his own time, because he needed the tool. If that is a dealbreaker
+for your environment, it should be — and no amount of stars would change it.
+
+What is done about it instead:
+
+- **MIT licensed, and small enough to actually take over.** Roughly 3.5k lines
+  across two main files, plain Flask and plain HTML, no framework magic, no
+  build step, no code generation. Forking it and understanding it is an
+  afternoon, not a project.
+- **No lock-in, by construction.** Everything the panel does, it does through
+  the standard MinIO S3 and admin APIs. It stores no state of its own, owns no
+  database and no schema. Turn it off and your MinIO is exactly as it was —
+  there is nothing to migrate off.
+- **Tested, so it can be changed by someone who did not write it.** The parts
+  that are hand-written and easy to break silently — request signing, crypto,
+  auth, permission parsing — are pinned by tests, and CI blocks the image build
+  if they fail.
+- **Documented direction, including what will not be built.** See
+  [ROADMAP.md](ROADMAP.md).
+- **Clickable before you commit to it.** `MODE=PREVIEW` lets you evaluate the
+  whole panel without pointing it at anything real.
+
+Issues and feature requests are welcome and are the best way to influence what
+gets built next: [GitLab issues](https://git.racis.dev/marceliracis/minio-dash/-/issues)
+· [GitHub issues](https://github.com/MarceliRacis/minio-dash/issues).
+Security reports: see [CONTRIBUTING.md](CONTRIBUTING.md#security).
+
+### Thanks for the review
+
+Thanks to the reviewers at
+[pixapps.ai](https://pixapps.ai/jurypress/reviews/minio-aa8046-rb8ae8b/) for
+taking the time to look at this properly. Four of their points landed, and this
+release is the answer to them: the missing test suite is now 129 tests wired
+into CI, the manual secret generation is a single `--init-env`, the absent
+roadmap is [ROADMAP.md](ROADMAP.md), and the "no way to try it without
+committing" problem is `MODE=PREVIEW`. The bus-factor concern is real and is
+addressed as honestly as it can be, above. Good critique is more useful than
+praise.
 
 ---
 

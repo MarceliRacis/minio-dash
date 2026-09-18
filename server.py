@@ -16,7 +16,7 @@ Run:
   MINIO_ENDPOINT=s3.racis.dev SECRET_KEY=... ENCRYPTION_KEY=... python server.py
 """
 
-import os, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct, datetime, threading
+import os, sys, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct, datetime, threading
 from pathlib import Path
 from functools import wraps
 from urllib.parse import urlparse, quote
@@ -51,6 +51,46 @@ except ImportError:
     MinioAdmin = None
     StaticProvider = None
 
+# ─── SETUP BOOTSTRAP ─────────────────────────────────────────────────────────
+
+def _write_env_file(path: str = ".env") -> int:
+    """Generate a ready-to-run .env so nobody has to hand-assemble secrets.
+
+    Runs before the config validation below, because the whole point is to be
+    usable when SECRET_KEY / ENCRYPTION_KEY are not set yet.
+    """
+    target = Path(path)
+    if target.exists():
+        print(f"Refusing to overwrite existing {target} — "
+              f"delete it first or copy the values by hand.")
+        return 1
+
+    example = Path(__file__).parent / ".env.example"
+    if example.exists():
+        body = example.read_text(encoding="utf-8")
+        body = body.replace("SECRET_KEY=changeme", f"SECRET_KEY={secrets.token_hex(32)}")
+        body = body.replace("ENCRYPTION_KEY=changeme-encryption-key",
+                            f"ENCRYPTION_KEY={secrets.token_hex(16)}")
+    else:
+        body = (f"MINIO_ENDPOINT=https://s3.example.com\n"
+                f"SECRET_KEY={secrets.token_hex(32)}\n"
+                f"ENCRYPTION_KEY={secrets.token_hex(16)}\n"
+                f"PORT=7474\n")
+
+    target.write_text(body, encoding="utf-8")
+    try:
+        target.chmod(0o600)   # it holds secrets — keep it owner-only
+    except OSError:
+        pass
+    print(f"Wrote {target} with freshly generated SECRET_KEY and ENCRYPTION_KEY.")
+    print("Set MINIO_ENDPOINT to your MinIO server, then: python server.py")
+    return 0
+
+
+if __name__ == "__main__" and "--init-env" in sys.argv:
+    raise SystemExit(_write_env_file())
+
+
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 _raw_endpoint    = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
 SECRET_KEY       = os.environ.get("SECRET_KEY")
@@ -62,6 +102,20 @@ SESSION_TTL      = 8 * 3600   # 8 hours
 # DEBUG must be explicitly opted-in; it enables dev-only conveniences that are
 # unsafe in production (insecure key fallbacks, the /api/debug-users endpoint).
 DEBUG            = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes", "on")
+
+# MODE=PREVIEW swaps the MinIO backend for an in-memory sandbox (preview.py) so
+# the panel can be exposed publicly as a clickable demo. Nothing it touches is
+# real: no MinIO connection is ever opened and every visitor gets their own
+# disposable world.
+PREVIEW_MODE = os.environ.get("MODE", "").strip().upper() == "PREVIEW"
+
+if PREVIEW_MODE and (not SECRET_KEY or not ENC_KEY_RAW):
+    # A preview session protects nothing of value and is meant to be thrown
+    # away, so generate ephemeral keys rather than make the demo need config.
+    # Restarting the process logs everyone out, which is the desired behaviour.
+    SECRET_KEY  = SECRET_KEY or secrets.token_hex(32)
+    ENC_KEY_RAW = ENC_KEY_RAW or secrets.token_hex(16)
+    print("  [preview] using ephemeral SECRET_KEY / ENCRYPTION_KEY for this process")
 
 if not SECRET_KEY or not ENC_KEY_RAW:
     print("CRITICAL: SECRET_KEY and ENCRYPTION_KEY must be set in environment!")
@@ -81,9 +135,14 @@ ENC_KEY_RAW = ENC_KEY_RAW or "dev-only-encryption-key"
 
 # Derive a proper 32-byte key for AES-256
 # PBKDF2-HMAC-SHA256, 600k iterations (per OWASP guidance)
+# hmac_hash_module= uses pycryptodome's native PBKDF2-HMAC-SHA256 path. Passing
+# an equivalent Python `prf=` lambda instead forces a per-iteration callback into
+# Python and costs ~44s here versus ~0.5s — paid at import, so by every gunicorn
+# worker at boot. Both derive byte-identical keys, so this is safe for sessions
+# and credential blobs sealed before the change (see tests/test_crypto.py).
 _enc_key = PBKDF2(
     ENC_KEY_RAW, b"minio-dash-salt-v1", dkLen=32, count=600000,
-    prf=lambda p, s: HMAC.new(p, s, SHA256).digest(),
+    hmac_hash_module=SHA256,
 )
 
 _parsed = urlparse(_raw_endpoint if "://" in _raw_endpoint else "https://" + _raw_endpoint)
@@ -145,7 +204,15 @@ _sessions = SessionManager(REDIS_URL)
 
 # ─── MinIO client factory ─────────────────────────────────────────────────────
 
+def _preview_sandbox(sandbox_id: str):
+    import preview
+    return preview.REGISTRY.get(sandbox_id or "anonymous")
+
+
 def make_client(access_key: str, secret_key: str) -> Minio:
+    if PREVIEW_MODE:
+        import preview
+        return preview.FakeMinio(_preview_sandbox(access_key))
     http_client = urllib3.PoolManager(
         timeout=urllib3.Timeout(connect=5, read=20),
         retries=urllib3.Retry(total=2),
@@ -161,6 +228,9 @@ def make_client(access_key: str, secret_key: str) -> Minio:
 
 
 def make_admin_client(access_key: str, secret_key: str):
+    if PREVIEW_MODE:
+        import preview
+        return preview.FakeAdmin(_preview_sandbox(access_key))
     if not _HAS_MINIOADMIN or MinioAdmin is None:
         raise RuntimeError("MinioAdmin not available — pip install -U minio")
     creds = StaticProvider(access_key, secret_key)
@@ -209,6 +279,10 @@ def _q(value) -> str:
 
 def admin_request(method: str, path: str, access_key: str, secret_key: str,
                   body: bytes = b"", query: str = "") -> dict:
+    if PREVIEW_MODE:
+        import preview
+        return preview.fake_admin_request(
+            _preview_sandbox(access_key), method, path, body, query)
     if "?" in path and not query:
         path, query = path.split("?", 1)
     scheme = "https" if MINIO_SECURE else "http"
@@ -394,6 +468,13 @@ def index():
     return resp
 
 
+@app.route("/api/config")
+def public_config():
+    """Unauthenticated: the handful of facts the login screen needs before a
+    session exists. Deliberately exposes nothing beyond the deployment mode."""
+    return jsonify({"preview": PREVIEW_MODE})
+
+
 # ─── I18N ─────────────────────────────────────────────────────────────────────
 
 @app.route("/i18n/<lang>")
@@ -420,6 +501,22 @@ def login():
     data     = request.get_json(force=True) or {}
     username = (data.get("username") or "").strip()
     password = (data.get("password") or "").strip()
+
+    if PREVIEW_MODE:
+        # No real credentials exist. Hand out a brand-new sandbox so every visit
+        # starts from clean demo data, and grant admin so the whole panel is
+        # explorable. The sandbox id travels as the access key, which is what
+        # make_client()/admin_request() key the in-memory world on.
+        import preview
+        sandbox_id = preview.new_sandbox_id()
+        display    = username or "preview-admin"
+        token = create_token(display, True, ak=sandbox_id, sk="preview")
+        resp = jsonify({"token": token, "username": display, "admin": True,
+                        "backend": SESSION_BACKEND, "preview": True})
+        resp.set_cookie("token", token, max_age=SESSION_TTL, httponly=True,
+                        samesite="Lax", secure=MINIO_SECURE)
+        _issue_csrf_cookie(resp)
+        return resp
 
     if not username or not password:
         return jsonify({"error": "Missing credentials"}), 400
@@ -489,7 +586,8 @@ def me():
     # Report the *live* admin status (not the possibly-stale JWT claim) so the UI
     # only shows admin panels to users who still have admin rights in MinIO.
     live_admin = bool(request.is_admin) and _verify_admin_live()
-    resp = jsonify({"username": request.username, "admin": live_admin})
+    resp = jsonify({"username": request.username, "admin": live_admin,
+                    "preview": PREVIEW_MODE})
     # Refresh the CSRF cookie so an auto-logged-in session (valid token cookie but
     # no/expired csrf cookie) can perform mutating requests without re-login.
     if not request.cookies.get("csrf_token"):
@@ -1496,6 +1594,7 @@ def _print_banner():
 
   Endpoint : {'https' if MINIO_SECURE else 'http'}://{MINIO_HOST}
   Port     : {PORT}
+  Mode     : {'PREVIEW — in-memory sandbox, no real MinIO' if PREVIEW_MODE else 'normal'}
   Auth     : JWT (HS256), TTL {SESSION_TTL//3600}h
   WebUI    : {WEBUI_HOST}
 """)
@@ -1509,9 +1608,18 @@ if __name__ == "__main__":
         import gunicorn.app.base
 
         workers = GUNICORN_WORKERS or 2
-        threads  = GUNICORN_THREADS  or 1
+        threads  = GUNICORN_THREADS  or 8
+        if PREVIEW_MODE:
+            # Preview state (the sandboxes, and the ephemeral signing keys when
+            # none were supplied) lives in this process's memory. A second worker
+            # would hold a different world and reject the first one's tokens, so
+            # preview scales with threads only.
+            workers = 1
+            threads = GUNICORN_THREADS or 16
+            print("  [preview] forcing workers=1 — sandbox state is per-process")
         if not GUNICORN_WORKERS and not GUNICORN_THREADS:
-            print("  [gunicorn] GUNICORN_WORKERS / GUNICORN_THREADS not set — using defaults (workers=2, threads=1)")
+            print(f"  [gunicorn] GUNICORN_WORKERS / GUNICORN_THREADS not set — "
+                  f"using defaults (workers={workers}, threads={threads})")
         else:
             print(f"  [gunicorn] workers={workers}  threads={threads}")
 

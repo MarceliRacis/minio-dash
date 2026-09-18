@@ -1,5 +1,36 @@
 stages:
+  - test
   - build
+
+# Paths that can actually change behaviour. Docs (*.md), screenshots and the
+# production/ manifests are excluded on purpose — rebuilding a multi-arch image
+# because a README line moved is pure waste. GitLab's `changes:` has no negation,
+# so this is an allowlist rather than a "skip docs" rule.
+.code_changes: &code_changes
+  - "**/*.py"
+  - "**/*.html"
+  - "locales/**/*"
+  - "tests/**/*"
+  - requirements.txt
+  - requirements-dev.txt
+  - pytest.ini
+  - Dockerfile
+  - .dockerignore
+  - .gitlab-ci.yml
+
+test:
+  stage: test
+  tags:
+    - arm64
+  image: python:3.11-slim
+  before_script:
+    - pip install --no-cache-dir -r requirements-dev.txt
+  script:
+    - python -m pytest
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH
+      changes: *code_changes
 
 .build_base: &build_base
   stage: build
@@ -23,8 +54,9 @@ build_latest:
         --platform linux/amd64,linux/arm64
         --tag $IMAGE:latest
         --push .
-  only:
-    - main
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes: *code_changes
 
 build_tag:
   <<: *build_base
