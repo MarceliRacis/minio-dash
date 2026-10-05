@@ -21,6 +21,7 @@ os.environ.setdefault("SECRET_KEY", "0" * 64)
 os.environ.setdefault("ENCRYPTION_KEY", "1" * 32)
 os.environ.setdefault("MINIO_ENDPOINT", "http://localhost:9000")
 os.environ.setdefault("SESSION_BACKEND", "jwt")
+os.environ.setdefault("COOKIE_SECURE", "0")
 os.environ.pop("DEBUG", None)
 os.environ.pop("REDIS_URL", None)
 

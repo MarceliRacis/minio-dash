@@ -566,7 +566,7 @@ body.no-admin #page-policies { display: none !important; }
   <div class="modal">
     <button class="modal-close" onclick="closeModal('modal-share')">✕</button>
     <div class="modal-title" data-i18n="modals.share.title">Share Link</div>
-    <div class="form-group"><label data-i18n="modals.share.labelExpire">Expire (hours)</label><input type="number" id="share-expire" value="168" min="1" max="8760"></div>
+    <div class="form-group"><label data-i18n="modals.share.labelExpire">Expire (hours)</label><input type="number" id="share-expire" value="168" min="1" max="168"></div>
     <div id="share-result" style="display:none">
       <div class="form-group"><label data-i18n="modals.share.labelUrl">Presigned URL</label>
         <div class="copy-pill" onclick="copyText(document.getElementById('share-url').textContent)">
@@ -611,8 +611,10 @@ body.no-admin #page-policies { display: none !important; }
 
 <script>
 // ═══════ STATE ═══════
+// The session token lives only in an HttpOnly cookie; JS never sees it.
+// Drop a token persisted by older versions of this page.
+try { localStorage.removeItem('token'); } catch {}
 const S = {
-  token: localStorage.getItem('token') || '',
   user: null, isAdmin: false, endpoint: '', preview: false,
   buckets: [], currentBucket: null, currentPrefix: '',
   fileView: localStorage.getItem('fileView') || 'list',
@@ -746,12 +748,11 @@ async function initPreviewMode() {
 }
 
 async function tryAutoLogin() {
-  if (!S.token) return false;
   try {
     const me = await GET('/me');
     S.user = me.username; S.isAdmin = me.admin;
     return true;
-  } catch { S.token = ''; localStorage.removeItem('token'); return false; }
+  } catch { return false; }
 }
 
 document.getElementById('login-btn').addEventListener('click', doLogin);
@@ -772,8 +773,7 @@ async function doLogin() {
     });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || 'Login failed');
-    S.token = j.token; S.user = j.username; S.isAdmin = j.admin;
-    localStorage.setItem('token', S.token);
+    S.user = j.username; S.isAdmin = j.admin;
     showApp();
   } catch(e) { showLoginErr(e.message); }
   finally {
@@ -789,8 +789,7 @@ function showLoginErr(msg) {
 
 async function logout(silent=false) {
   if (!silent) { try { await POST('/logout'); } catch {} }
-  S.token = ''; S.user = null;
-  localStorage.removeItem('token');
+  S.user = null;
   document.getElementById('app').classList.remove('visible');
   document.getElementById('login-screen').style.display = 'flex';
 }
@@ -883,13 +882,13 @@ async function loadDashboard() {
 }
 
 function bucketCardHTML(b) {
-  return `<div class="bucket-card" onclick="navigate('files','${esc(b.name)}')">
+  return `<div class="bucket-card" onclick="navigate('files','${jsq(b.name)}')">
     <div class="bucket-card-icon">🗄</div>
     <div class="bucket-card-name" title="${esc(b.name)}">${esc(b.name)}</div>
     <div class="bucket-card-date">${fmtDate(b.creationDate)||t('buckets.unknownDate')}</div>
     <div class="bucket-card-actions" onclick="event.stopPropagation()">
-      <button class="btn btn-ghost btn-sm" onclick="navigate('files','${esc(b.name)}')">${t('buckets.browse')}</button>
-      ${S.isAdmin?`<button class="btn btn-danger btn-sm" onclick="confirmDeleteBucket('${esc(b.name)}')">🗑</button>`:''}
+      <button class="btn btn-ghost btn-sm" onclick="navigate('files','${jsq(b.name)}')">${t('buckets.browse')}</button>
+      ${S.isAdmin?`<button class="btn btn-danger btn-sm" onclick="confirmDeleteBucket('${jsq(b.name)}')">🗑</button>`:''}
     </div>
   </div>`;
 }
@@ -900,7 +899,7 @@ async function loadBuckets() {
 }
 function renderSidebarBuckets() {
   document.getElementById('bucket-nav').innerHTML = S.buckets.map(b =>
-    `<div class="nav-item nav-bucket" data-page="files-${b.name}" onclick="navigate('files','${esc(b.name)}')"><span class="icon">◦</span> ${esc(b.name)}</div>`
+    `<div class="nav-item nav-bucket" data-page="files-${esc(b.name)}" onclick="navigate('files','${jsq(b.name)}')"><span class="icon">◦</span> ${esc(b.name)}</div>`
   ).join('');
 }
 function renderBucketsPage() {
@@ -943,19 +942,19 @@ function renderUsersTable(users) {
   const tbody=document.getElementById('users-body');
   if (!users.length) { tbody.innerHTML=`<tr><td colspan="4"><div class="empty-state"><div class="es-icon">👥</div><div class="es-text">${t('users.noUsers')}</div></div></td></tr>`; return; }
   tbody.innerHTML=users.map(u=>`
-    <tr onclick="openBucketAccess('${esc(u.username)}')">
+    <tr onclick="openBucketAccess('${jsq(u.username)}')">
       <td><strong style="font-family:var(--mono)">${esc(u.username)}</strong></td>
-      <td><span class="badge ${u.status==='enabled'?'badge-green':'badge-red'}">${u.status}</span></td>
+      <td><span class="badge ${u.status==='enabled'?'badge-green':'badge-red'}">${esc(u.status)}</span></td>
       <td>${(u.policies||[]).filter(p=>p).map(p=>`<span class="tag">${esc(p)}</span>`).join('')||'<span style="color:var(--text2)">—</span>'}</td>
       <td onclick="event.stopPropagation()">
         <div style="display:flex;gap:5px;flex-wrap:wrap">
-          <button class="btn btn-ghost btn-sm" onclick="openBucketAccess('${esc(u.username)}')">${t('users.btnAccess')}</button>
-          <button class="btn btn-ghost btn-sm" onclick="openEditPolicies('${esc(u.username)}')">${t('users.btnPolicies')}</button>
-          <button class="btn btn-ghost btn-sm" onclick="doResetPwd('${esc(u.username)}')">${t('users.btnResetPwd')}</button>
+          <button class="btn btn-ghost btn-sm" onclick="openBucketAccess('${jsq(u.username)}')">${t('users.btnAccess')}</button>
+          <button class="btn btn-ghost btn-sm" onclick="openEditPolicies('${jsq(u.username)}')">${t('users.btnPolicies')}</button>
+          <button class="btn btn-ghost btn-sm" onclick="doResetPwd('${jsq(u.username)}')">${t('users.btnResetPwd')}</button>
           ${u.status==='enabled'
-            ?`<button class="btn btn-ghost btn-sm" onclick="toggleUser('${esc(u.username)}','disable')">${t('users.btnDisable')}</button>`
-            :`<button class="btn btn-success btn-sm" onclick="toggleUser('${esc(u.username)}','enable')">${t('users.btnEnable')}</button>`}
-          ${u.username!==S.user?`<button class="btn btn-danger btn-sm" onclick="confirmDeleteUser('${esc(u.username)}')">${t('users.btnDelete')}</button>`:''}
+            ?`<button class="btn btn-ghost btn-sm" onclick="toggleUser('${jsq(u.username)}','disable')">${t('users.btnDisable')}</button>`
+            :`<button class="btn btn-success btn-sm" onclick="toggleUser('${jsq(u.username)}','enable')">${t('users.btnEnable')}</button>`}
+          ${u.username!==S.user?`<button class="btn btn-danger btn-sm" onclick="confirmDeleteUser('${jsq(u.username)}')">${t('users.btnDelete')}</button>`:''}
         </div>
       </td>
     </tr>`).join('');
@@ -1066,7 +1065,7 @@ function renderBucketAccessBuilder() {
     const btns = levels.map(lvl => `
       <button class="acc-btn ${cur===lvl?'sel-'+lvl:''}"
         data-bucket="${esc(b)}" data-level="${lvl}"
-        onclick="setAccess('${esc(b)}','${lvl}',this)">
+        onclick="setAccess('${jsq(b)}','${lvl}',this)">
         ${labels[lvl]}
       </button>`).join('');
     return `<div class="policy-bucket-row">
@@ -1145,7 +1144,10 @@ async function saveBucketAccess() {
       await POST('/policies', { name: policyName, policy });
       // Assign via bucket-access endpoint with empty access map (just to trigger policy assignment)
       // Actually easier: just set user policies directly
-      await PUT(`/users/${S.baUser}/policies`, { policies: [policyName] });
+      // Keep admin policies attached, same as the visual editor does server-side.
+      const current = await GET(`/users/${S.baUser}/policies`).catch(()=>[]);
+      const keep = current.filter(p => ['consoleAdmin','diagnostics'].includes(p));
+      await PUT(`/users/${S.baUser}/policies`, { policies: [...keep, policyName] });
       toast(t('modals.bucketAccess.policySaved'),'success');
     } else {
       // Save from visual map
@@ -1199,9 +1201,9 @@ function renderMatrix(d) {
       <td style="font-family:var(--mono);font-size:12px">${esc(u)}</td>
       ${buckets.map(b=>{
         const a=matrix[u]?.[b]||'none';
-        return `<td class="access-cell" onclick="openBucketAccess('${esc(u)}')" title="Click to edit">${accIcon[a]||accIcon.none}</td>`;
+        return `<td class="access-cell" onclick="openBucketAccess('${jsq(u)}')" title="Click to edit">${accIcon[a]||accIcon.none}</td>`;
       }).join('')}
-      <td><button class="btn btn-ghost btn-sm" onclick="openBucketAccess('${esc(u)}')">Edit</button></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="openBucketAccess('${jsq(u)}')">Edit</button></td>
     </tr>`;
   });
   html+=`</tbody></table></div>
@@ -1210,7 +1212,8 @@ function renderMatrix(d) {
     <span><span class="acc-r">→</span> read only</span>
     <span><span class="acc-w">←</span> write only</span>
     <span><span class="acc-none">✕</span> no access</span>
-  </div>`;
+  </div>
+  ${d.approximate?`<p style="margin-top:8px;font-size:11px;color:var(--text2)">Approximation from user policy text: ignores Conditions, group policies, bucket policies and Deny across policies. Not an effective-access check.</p>`:''}`;
   cont.innerHTML=html;
 }
 
@@ -1233,8 +1236,8 @@ async function loadPoliciesList() {
         <td>${builtIn.includes(p)?`<span class="badge badge-blue">${t("policies.builtIn")}</span>`:`<span class="badge badge-gray">${t("policies.custom")}</span>`}</td>
         <td>
           <div style="display:flex;gap:6px">
-            <button class="btn btn-ghost btn-sm" onclick="editPolicy('${esc(p)}')">${t("policies.btnEdit")}</button>
-            ${!builtIn.includes(p)?`<button class="btn btn-danger btn-sm" onclick="confirmDeletePolicy('${esc(p)}')">${t("users.btnDelete")}</button>`:''}
+            <button class="btn btn-ghost btn-sm" onclick="editPolicy('${jsq(p)}')">${t("policies.btnEdit")}</button>
+            ${!builtIn.includes(p)?`<button class="btn btn-danger btn-sm" onclick="confirmDeletePolicy('${jsq(p)}')">${t("users.btnDelete")}</button>`:''}
           </div>
         </td>
       </tr>`).join('');
@@ -1332,7 +1335,7 @@ function fileIcon(item) {
 function fileItemGrid(item) {
   const icon=fileIcon(item);
   const key=item.fullKey||S.currentPrefix+item.name;
-  const click=item.isDir?`enterDir('${esc(item.name)}')`:`openPreview('${esc(key)}')`;
+  const click=item.isDir?`enterDir('${jsq(item.name)}')`:`openPreview('${jsq(key)}')`;
   return `<div class="fm-item-grid" onclick="${click}">
     <div class="fi-icon">${icon}</div>
     <div class="fi-name" title="${esc(item.name)}">${esc(item.name)}</div>
@@ -1343,7 +1346,7 @@ function fileItemGrid(item) {
 function fileItemList(item) {
   const icon=fileIcon(item);
   const key=item.fullKey||S.currentPrefix+item.name;
-  const click=item.isDir?`enterDir('${esc(item.name)}')`:`openPreview('${esc(key)}')`;
+  const click=item.isDir?`enterDir('${jsq(item.name)}')`:`openPreview('${jsq(key)}')`;
   return `<div class="fm-item-list" onclick="${click}">
     <div class="fi-icon">${icon}</div>
     <div class="fi-name" title="${esc(item.name)}">${esc(item.name)}</div>
@@ -1351,11 +1354,11 @@ function fileItemList(item) {
     <div class="fi-size">${item.isDir?'':fmtSize(item.size)}</div>
     <div class="fi-actions" onclick="event.stopPropagation()">
       ${!item.isDir?`
-        <button class="btn-icon" title="Preview" onclick="openPreview('${esc(key)}')">👁</button>
-        <button class="btn-icon" title="Download" onclick="downloadFile('${esc(key)}')">↓</button>
-        <button class="btn-icon" title="Share" onclick="openShare('${esc(key)}')">🔗</button>`:''}
-      <button class="btn-icon" title="Rename" onclick="openRename('${esc(item.name)}','${esc(key)}',${item.isDir})">✎</button>
-      <button class="btn-icon" title="Delete" onclick="confirmDeleteFile('${esc(key)}',${item.isDir})" style="color:var(--red)">🗑</button>
+        <button class="btn-icon" title="Preview" onclick="openPreview('${jsq(key)}')">👁</button>
+        <button class="btn-icon" title="Download" onclick="downloadFile('${jsq(key)}')">↓</button>
+        <button class="btn-icon" title="Share" onclick="openShare('${jsq(key)}')">🔗</button>`:''}
+      <button class="btn-icon" title="Rename" onclick="openRename('${jsq(item.name)}','${jsq(key)}',${item.isDir})">✎</button>
+      <button class="btn-icon" title="Delete" onclick="confirmDeleteFile('${jsq(key)}',${item.isDir})" style="color:var(--red)">🗑</button>
     </div>
   </div>`;
 }
@@ -1367,7 +1370,7 @@ function renderBreadcrumb() {
   let html=`<span onclick="goRoot()" title="Bucket root">🗄 ${esc(S.currentBucket)}</span>`;
   parts.forEach((part,i)=>{
     const prefix=parts.slice(0,i+1).join('/')+'/';
-    html+=`<span class="sep">/</span><span onclick="goPrefix('${esc(prefix)}')">${esc(part)}</span>`;
+    html+=`<span class="sep">/</span><span onclick="goPrefix('${jsq(prefix)}')">${esc(part)}</span>`;
   });
   el.innerHTML=html;
 }
@@ -1458,7 +1461,11 @@ async function openPreview(key) {
   const textExts=['txt','md','log','sh','bash','bat','py','rb','go','rs','c','cpp','h','java','kt','swift','env','yml','yaml','toml','ini','conf','xml','csv','js','ts','jsx','tsx','css','json','sql'];
   try {
     if (imgExts.includes(ext)) {
-      const blob=await fetchWithAuth(viewUrl); const url=URL.createObjectURL(blob);
+      let blob=await fetchWithAuth(viewUrl);
+      // The server sends SVG as text/plain; re-type it for <img>, which never
+      // runs scripts inside an SVG.
+      if (ext==='svg') blob=new Blob([blob],{type:'image/svg+xml'});
+      const url=URL.createObjectURL(blob);
       cont.innerHTML=`<img src="${url}" style="max-width:100%;display:block;margin:0 auto" onload="URL.revokeObjectURL(this.src)">`;
     } else if (videoExts.includes(ext)) {
       const blob=await fetchWithAuth(viewUrl); const url=URL.createObjectURL(blob);
@@ -1471,8 +1478,8 @@ async function openPreview(key) {
         <div style="font-size:32px;margin-bottom:16px">🌐</div>
         <p style="color:var(--text1);margin-bottom:20px">${t('files.htmlPreviewQ')}</p>
         <div style="display:flex;gap:12px;justify-content:center">
-          <button class="btn btn-primary" onclick="showHtmlIframe('${esc(viewUrl)}')">${t('files.htmlPreview')}</button>
-          <button class="btn btn-ghost" onclick="showTextPreviewCont('${esc(viewUrl)}')">${t('files.htmlSource')}</button>
+          <button class="btn btn-primary" onclick="showHtmlIframe('${jsq(viewUrl)}')">${t('files.htmlPreview')}</button>
+          <button class="btn btn-ghost" onclick="showTextPreviewCont('${jsq(viewUrl)}')">${t('files.htmlSource')}</button>
         </div></div>`;
     } else if (textExts.includes(ext)) {
       await showTextPreviewCont(viewUrl,cont);
@@ -1484,13 +1491,15 @@ async function openPreview(key) {
         <div style="font-size:48px;margin-bottom:16px">📄</div>
         <p style="color:var(--text1);margin-bottom:8px">${esc(name)}</p>
         <p style="color:var(--text2);font-family:var(--mono);font-size:12px;margin-bottom:20px">${t('files.previewUnavailable',{ext})}</p>
-        <button class="btn btn-primary" onclick="downloadFile('${esc(key)}')">↓ Download</button></div>`;
+        <button class="btn btn-primary" onclick="downloadFile('${jsq(key)}')">↓ Download</button></div>`;
     }
   } catch(e) { cont.innerHTML=`<div style="padding:24px;color:var(--red)">${esc(e.message)}</div>`; }
 }
 
 async function showHtmlIframe(url) {
-  const blob = await fetchWithAuth(url);
+  // The server deliberately serves HTML as text/plain. Re-type it here and only
+  // ever render it inside the opaque-origin sandbox below.
+  const blob = new Blob([await fetchWithAuth(url)], {type: 'text/html'});
   const blobUrl = URL.createObjectURL(blob);
   // Using sandbox="allow-scripts" WITHOUT "allow-same-origin" forces a unique origin.
   // This allows JS to run in a sandbox but prevents access to the parent's cookies, localStorage, and API.
@@ -1549,6 +1558,15 @@ function toast(msg,type='info') {
 
 // ═══════ UTILS ═══════
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// For values placed inside a single-quoted JS string in an inline handler,
+// e.g. onclick="openPreview('${jsq(key)}')". esc() alone is not enough there:
+// the HTML parser decodes &#39; back to ' before the JS runs, so an object
+// key like  x');alert(1);//  would break out. JS-escape first, then HTML-escape.
+function jsq(s) {
+  return esc(String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'")
+    .replace(/\n/g,'\\n').replace(/\r/g,'\\r')
+    .replace(/ /g,'\\u2028').replace(/ /g,'\\u2029'));
+}
 function escHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function fmtSize(bytes) { if (!bytes) return '0 B'; const s=['B','KB','MB','GB','TB']; const i=Math.floor(Math.log(bytes)/Math.log(1024)); return (bytes/Math.pow(1024,i)).toFixed(i?1:0)+' '+s[i]; }
 function fmtDate(d) { if (!d) return ''; try { return new Date(d).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}); } catch { return d; } }

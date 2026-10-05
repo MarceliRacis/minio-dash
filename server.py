@@ -16,7 +16,7 @@ Run:
   MINIO_ENDPOINT=s3.racis.dev SECRET_KEY=... ENCRYPTION_KEY=... python server.py
 """
 
-import os, sys, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct, datetime, threading
+import os, sys, json, time, secrets, string, hashlib, hmac, base64, mimetypes, io, struct, datetime, threading, re, fnmatch
 from pathlib import Path
 from functools import wraps
 from urllib.parse import urlparse, quote
@@ -102,6 +102,10 @@ SESSION_TTL      = 8 * 3600   # 8 hours
 # DEBUG must be explicitly opted-in; it enables dev-only conveniences that are
 # unsafe in production (insecure key fallbacks, the /api/debug-users endpoint).
 DEBUG            = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes", "on")
+# Whether the panel itself is served over HTTPS. Deliberately independent of
+# MINIO_ENDPOINT: in k8s MinIO usually sits on plain http://minio:9000 while the
+# panel is behind a TLS ingress, and the session cookie must still be Secure.
+COOKIE_SECURE    = os.environ.get("COOKIE_SECURE", "1").lower() not in ("0", "false", "no", "off")
 
 # MODE=PREVIEW swaps the MinIO backend for an in-memory sandbox (preview.py) so
 # the panel can be exposed publicly as a clickable demo. Nothing it touches is
@@ -149,7 +153,18 @@ _parsed = urlparse(_raw_endpoint if "://" in _raw_endpoint else "https://" + _ra
 MINIO_HOST   = _parsed.netloc or _raw_endpoint.rstrip("/")
 MINIO_SECURE = _parsed.scheme != "http"
 
-app = Flask(__name__, static_folder=".", static_url_path="")
+# No static folder: serving "." would expose .env, server.py and everything else
+# in the working directory. ui.html and locales/ are served by explicit routes.
+APP_DIR = Path(__file__).resolve().parent
+app = Flask(__name__, static_folder=None)
+
+# Number of trusted reverse proxies in front of the panel (ingress, nginx…).
+# Only then is X-Forwarded-For trusted for the client IP used by the login
+# throttle; without a proxy leave it 0, or clients could spoof their IP.
+PROXY_HOPS = int(os.environ.get("PROXY_HOPS", 0))
+if PROXY_HOPS:
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=PROXY_HOPS, x_proto=PROXY_HOPS)
 
 # ─── SESSION MANAGEMENT (REDIS + AES-GCM) ────────────────────────────────────
 
@@ -200,6 +215,24 @@ class SessionManager:
         else:
             self._local_cache.pop(username, None)
 
+    # Logout denylist, keyed by the JWT's jti. Without Redis it is per-process,
+    # so with several gunicorn workers a revoked token may still work on another
+    # worker until it expires — set REDIS_URL for reliable revocation.
+    def revoke(self, jti: str, ttl: int):
+        if ttl <= 0:
+            return
+        if self.r:
+            self.r.setex(f"revoked:{jti}", ttl, b"1")
+        else:
+            now = time.time()
+            self._revoked = {k: v for k, v in getattr(self, "_revoked", {}).items() if v > now}
+            self._revoked[jti] = now + ttl
+
+    def is_revoked(self, jti: str) -> bool:
+        if self.r:
+            return bool(self.r.exists(f"revoked:{jti}"))
+        return getattr(self, "_revoked", {}).get(jti, 0) > time.time()
+
 _sessions = SessionManager(REDIS_URL)
 
 # ─── MinIO client factory ─────────────────────────────────────────────────────
@@ -239,8 +272,10 @@ def make_admin_client(access_key: str, secret_key: str):
     params = set(sig.parameters.keys())
     kwargs = {"endpoint": MINIO_HOST, "credentials": creds, "secure": MINIO_SECURE}
     if "cert_check" in params:
-        # Only skip TLS verification for plain-HTTP endpoints, matching make_client.
-        kwargs["cert_check"] = not MINIO_SECURE
+        # cert_check=True means "verify the certificate". It was `not MINIO_SECURE`,
+        # which disabled verification on exactly the HTTPS endpoints. For plain
+        # HTTP the flag is irrelevant.
+        kwargs["cert_check"] = True
     return MinioAdmin(**kwargs)
 
 
@@ -307,6 +342,7 @@ def create_token(username: str, is_admin: bool, ak: str = None, sk: str = None) 
         "admin":    is_admin,
         "iat":      int(time.time()),
         "exp":      int(time.time()) + SESSION_TTL,
+        "jti":      secrets.token_urlsafe(16),
     }
     if SESSION_BACKEND == "jwt" and ak and sk:
         payload["creds"] = encrypt_creds(ak, sk)
@@ -328,8 +364,15 @@ def _issue_csrf_cookie(resp):
         max_age=SESSION_TTL,
         httponly=False,      # must be readable by JS to echo back in X-CSRF-Token
         samesite="Lax",
-        secure=MINIO_SECURE,
+        secure=COOKIE_SECURE,
     )
+    return resp
+
+
+def _set_session_cookie(resp, token: str):
+    resp.set_cookie("token", token, max_age=SESSION_TTL, httponly=True,
+                    samesite="Lax", secure=COOKIE_SECURE)
+    _issue_csrf_cookie(resp)
     return resp
 
 
@@ -360,15 +403,13 @@ def require_auth(f):
             if not _csrf_ok():
                 return jsonify({"error": "CSRF token missing or invalid"}), 403
 
-        # 2. Get token from Cookie (preferred) or Header
-        token = request.cookies.get("token")
-        if not token:
-            token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-        
-        claims = decode_token(token)
-        if not claims:
+        # 2. The session lives only in the HttpOnly cookie — it is never handed
+        #    to JS, so there is no Bearer header path to steal it through.
+        claims = decode_token(request.cookies.get("token", ""))
+        if not claims or _sessions.is_revoked(claims.get("jti", "")):
             return jsonify({"error": "Unauthorized"}), 401
-        
+
+        request.token_claims = claims
         request.username = claims["sub"]
         request.is_admin = claims.get("admin", False)
         
@@ -456,11 +497,22 @@ def require_admin(f):
         return f(*args, **kwargs)
     return wrapper
 
+
+def not_self(f):
+    """For user endpoints that would lock the caller out of their own session
+    (delete, disable, password reset). Must sit below require_auth."""
+    @wraps(f)
+    def wrapper(username, *args, **kwargs):
+        if username == request.username:
+            return jsonify({"error": "You cannot do this to your own account"}), 400
+        return f(username, *args, **kwargs)
+    return wrapper
+
 # ─── STATIC ───────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
-    resp = send_from_directory(".", "ui.html")
+    resp = send_from_directory(APP_DIR, "ui.html")
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["X-Content-Type-Options"] = "nosniff"
@@ -494,13 +546,79 @@ def i18n(lang):
     return jsonify({"error": "Locale file not found"}), 404
 
 
+# ─── REQUEST / RESPONSE HELPERS ──────────────────────────────────────────────
+
+def _json_body() -> dict:
+    """Request JSON, or {} for an empty/invalid body. get_json(force=True)
+    raises 400 on an empty body before `or {}` ever runs (e.g. a DELETE with
+    no body)."""
+    data = request.get_json(force=True, silent=True)
+    return data if isinstance(data, dict) else {}
+
+
+def _err(e: Exception, status: int = 500):
+    """Error response that doesn't leak internals. S3 errors carry a code and
+    message that are meant for the caller; anything else (connection errors,
+    tracebacks with internal hostnames) is logged and replaced."""
+    if isinstance(e, S3Error) or (PREVIEW_MODE and type(e).__name__ == "PreviewError"):
+        return jsonify({"error": f"{e.code}: {e.message}"}), status
+    app.logger.exception("request failed: %s", request.path)
+    return jsonify({"error": "Internal error — see server logs"}), status
+
+
+def _content_disposition(disposition: str, filename: str) -> str:
+    """RFC 6266 header that survives quotes and non-ASCII names: an ASCII
+    fallback in filename= plus the exact name in filename*=UTF-8''."""
+    fallback = "".join(c if 32 <= ord(c) < 127 and c not in '"\\' else "_" for c in filename) or "download"
+    return f"{disposition}; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+# Brute-force throttle for /api/login. Only failures count, tracked per
+# (client IP, username) and per client IP. Behind a reverse proxy set
+# PROXY_HOPS so the real client IP is used — otherwise every visitor shares the
+# proxy's address and the per-IP limit becomes a global one. It is per-process;
+# put limit_req in front of the panel (nginx/ingress) for a hard global limit.
+LOGIN_WINDOW        = 300   # seconds
+LOGIN_MAX_PER_USER  = 10
+LOGIN_MAX_PER_IP    = 50
+_login_failures: dict = {}
+_login_lock = threading.Lock()
+
+
+def _login_keys(username: str) -> list[tuple[str, int]]:
+    ip = request.remote_addr
+    return [(f"u:{ip}:{username}", LOGIN_MAX_PER_USER),
+            (f"ip:{ip}", LOGIN_MAX_PER_IP)]
+
+
+def _login_blocked(username: str) -> bool:
+    now = time.time()
+    with _login_lock:
+        for key, limit in _login_keys(username):
+            hits = [t for t in _login_failures.get(key, []) if t > now - LOGIN_WINDOW]
+            _login_failures[key] = hits
+            if len(hits) >= limit:
+                return True
+    return False
+
+
+def _login_failed(username: str):
+    now = time.time()
+    with _login_lock:
+        for key, _ in _login_keys(username):
+            _login_failures.setdefault(key, []).append(now)
+        if len(_login_failures) > 10000:
+            for k in [k for k, v in _login_failures.items() if not v or v[-1] <= now - LOGIN_WINDOW]:
+                _login_failures.pop(k, None)
+
+
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 
 @app.route("/api/login", methods=["POST"])
 def login():
-    data     = request.get_json(force=True) or {}
-    username = (data.get("username") or "").strip()
-    password = (data.get("password") or "").strip()
+    data     = _json_body()
+    username = str(data.get("username") or "").strip()
+    password = str(data.get("password") or "")   # not stripped: spaces are valid in a secret key
 
     if PREVIEW_MODE:
         # No real credentials exist. Hand out a brand-new sandbox so every visit
@@ -511,15 +629,15 @@ def login():
         sandbox_id = preview.new_sandbox_id()
         display    = username or "preview-admin"
         token = create_token(display, True, ak=sandbox_id, sk="preview")
-        resp = jsonify({"token": token, "username": display, "admin": True,
+        resp = jsonify({"username": display, "admin": True,
                         "backend": SESSION_BACKEND, "preview": True})
-        resp.set_cookie("token", token, max_age=SESSION_TTL, httponly=True,
-                        samesite="Lax", secure=MINIO_SECURE)
-        _issue_csrf_cookie(resp)
-        return resp
+        return _set_session_cookie(resp, token)
 
     if not username or not password:
         return jsonify({"error": "Missing credentials"}), 400
+
+    if _login_blocked(username):
+        return jsonify({"error": "Too many failed attempts, try again later"}), 429
 
     _BAD_CRED_CODES = {
         "AccessDenied", "InvalidAccessKeyId",
@@ -535,14 +653,18 @@ def login():
             if e.code in ("AccessDenied", "AllAccessDisabled"):
                 pass # Creds are valid, just no permission to list buckets
             elif any(code in str(e) for code in _BAD_CRED_CODES):
+                _login_failed(username)
                 return jsonify({"error": "Invalid credentials"}), 401
             else:
                 raise
     except Exception as e:
         err_str = str(e)
         if any(code in err_str for code in _BAD_CRED_CODES):
+            _login_failed(username)
             return jsonify({"error": "Invalid credentials"}), 401
-        return jsonify({"error": f"Cannot connect to MinIO: {e}"}), 503
+        # The exception text includes the internal MinIO address — log it only.
+        app.logger.error("login: cannot reach MinIO: %s", e)
+        return jsonify({"error": "Cannot connect to MinIO"}), 503
 
     is_admin = False
     try:
@@ -560,23 +682,21 @@ def login():
     _sessions.set(username, username, password, SESSION_TTL)
     token = create_token(username, is_admin, ak=username, sk=password)
 
-    resp = jsonify({"token": token, "username": username, "admin": is_admin, "backend": SESSION_BACKEND})
-    resp.set_cookie(
-        "token", token,
-        max_age=SESSION_TTL,
-        httponly=True,
-        samesite="Lax",
-        secure=MINIO_SECURE,
-    )
-    _issue_csrf_cookie(resp)
-    return resp
+    # The token goes out only as an HttpOnly cookie, never in the body, so page
+    # JS (and anything injected into it) cannot read or persist it.
+    resp = jsonify({"username": username, "admin": is_admin, "backend": SESSION_BACKEND})
+    return _set_session_cookie(resp, token)
 
 @app.route("/api/logout", methods=["POST"])
 @require_auth
 def logout():
     _sessions.delete(request.username)
+    claims = request.token_claims
+    if claims.get("jti"):
+        _sessions.revoke(claims["jti"], int(claims.get("exp", 0) - time.time()))
     resp = jsonify({"ok": True})
-    resp.delete_cookie("token")
+    resp.delete_cookie("token", samesite="Lax", secure=COOKIE_SECURE, httponly=True)
+    resp.delete_cookie("csrf_token", samesite="Lax", secure=COOKIE_SECURE)
     return resp
 
 
@@ -769,14 +889,14 @@ def get_policy(name):
         data = admin_request("GET", f"/info-canned-policy?name={_q(name)}", request.minio_ak, request.minio_sk)
         return jsonify(data)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/policies", methods=["POST"])
 @require_auth
 @require_admin
 def create_policy():
-    data   = request.get_json(force=True) or {}
+    data   = _json_body()
     name   = (data.get("name") or "").strip()
     policy = data.get("policy")
 
@@ -792,7 +912,7 @@ def create_policy():
                           request.minio_ak, request.minio_sk, body=json.dumps(policy).encode())
         return jsonify({"name": name}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/policies/<name>", methods=["DELETE"])
@@ -807,7 +927,7 @@ def delete_policy(name):
             admin_request("DELETE", f"/remove-canned-policy?name={_q(name)}", request.minio_ak, request.minio_sk)
         return jsonify({"deleted": name})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 # ─── USERS ────────────────────────────────────────────────────────────────────
@@ -870,20 +990,25 @@ def list_users():
             })
         return jsonify(users)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/users", methods=["POST"])
 @require_auth
 @require_admin
 def create_user():
-    data     = request.get_json(force=True) or {}
+    data     = _json_body()
     username = (data.get("username") or "").strip()
     password = data.get("password") or _gen_password()
-    policies = data.get("policies", ["readwrite"])
+    # No implicit readwrite: a user created without explicit policies gets none.
+    policies = data.get("policies", [])
 
     if not username:
         return jsonify({"error": "Missing username"}), 400
+    if not isinstance(password, str):
+        return jsonify({"error": "password must be a string"}), 400
+    if not isinstance(policies, list) or not all(isinstance(p, str) for p in policies):
+        return jsonify({"error": "policies must be a list of names"}), 400
 
     try:
         ac = request.admin_client
@@ -893,7 +1018,7 @@ def create_user():
             body = json.dumps({"secretKey": password, "status": "enabled"}).encode()
             admin_request("PUT", f"/add-user?accessKey={_q(username)}", request.minio_ak, request.minio_sk, body=body)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
     warn = []
     ac = request.admin_client
@@ -916,6 +1041,7 @@ def create_user():
 @app.route("/api/users/<username>", methods=["DELETE"])
 @require_auth
 @require_admin
+@not_self
 def delete_user(username):
     try:
         ac = request.admin_client
@@ -925,7 +1051,7 @@ def delete_user(username):
             admin_request("DELETE", f"/remove-user?accessKey={_q(username)}", request.minio_ak, request.minio_sk)
         return jsonify({"deleted": username})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/users/<username>/enable", methods=["POST"])
@@ -940,12 +1066,13 @@ def enable_user(username):
             admin_request("PUT", f"/set-user-status?accessKey={_q(username)}&status=enabled", request.minio_ak, request.minio_sk)
         return jsonify({"status": "enabled", "username": username})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/users/<username>/disable", methods=["POST"])
 @require_auth
 @require_admin
+@not_self
 def disable_user(username):
     try:
         ac = request.admin_client
@@ -955,7 +1082,7 @@ def disable_user(username):
             admin_request("PUT", f"/set-user-status?accessKey={_q(username)}&status=disabled", request.minio_ak, request.minio_sk)
         return jsonify({"status": "disabled", "username": username})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/users/<username>/info")
@@ -966,7 +1093,7 @@ def user_info(username):
         data = _sdk_user_info_single(request.admin_client, username, request.minio_ak, request.minio_sk)
         return jsonify(data)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/users/<username>/policies", methods=["GET"])
@@ -977,15 +1104,17 @@ def get_user_policies(username):
         data = _sdk_user_info_single(request.admin_client, username, request.minio_ak, request.minio_sk)
         return jsonify(data.get("policies", []))
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/users/<username>/policies", methods=["PUT"])
 @require_auth
 @require_admin
 def set_user_policies(username):
-    data     = request.get_json(force=True) or {}
+    data     = _json_body()
     policies = data.get("policies", [])
+    if not isinstance(policies, list) or not all(isinstance(p, str) for p in policies):
+        return jsonify({"error": "policies must be a list of names"}), 400
 
     ac = request.admin_client
     try:
@@ -993,6 +1122,10 @@ def set_user_policies(username):
         current = info.get("policies", [])
     except Exception:
         current = []
+
+    if username == request.username and any(
+            p in _ADMIN_POLICIES and p not in policies for p in current):
+        return jsonify({"error": "You cannot remove admin policies from yourself"}), 400
 
     errors = []
 
@@ -1027,6 +1160,7 @@ def set_user_policies(username):
 @app.route("/api/users/<username>/reset-password", methods=["POST"])
 @require_auth
 @require_admin
+@not_self
 def reset_password(username):
     password = _gen_password()
     # user_add / add-user re-enables the account as a side effect. Capture the
@@ -1054,7 +1188,7 @@ def reset_password(username):
             "status": "disabled" if was_disabled else "enabled",
         })
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 # ─── BUCKETS ──────────────────────────────────────────────────────────────────
@@ -1069,14 +1203,14 @@ def list_buckets():
             "creationDate": b.creation_date.isoformat() if b.creation_date else "",
         } for b in buckets])
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets", methods=["POST"])
 @require_auth
 @require_admin
 def create_bucket():
-    data   = request.get_json(force=True) or {}
+    data   = _json_body()
     name   = (data.get("name") or "").strip()
     region = (data.get("region") or "").strip() or None
 
@@ -1084,17 +1218,20 @@ def create_bucket():
         return jsonify({"error": "Missing name"}), 400
 
     try:
-        request.client.make_bucket(name)
+        if region:
+            request.client.make_bucket(name, location=region)
+        else:
+            request.client.make_bucket(name)
         return jsonify({"name": name}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>", methods=["DELETE"])
 @require_auth
 @require_admin
 def delete_bucket(bucket):
-    data  = request.get_json(force=True) or {}
+    data  = _json_body()
     force = data.get("force", False)
 
     try:
@@ -1108,7 +1245,7 @@ def delete_bucket(bucket):
         request.client.remove_bucket(bucket)
         return jsonify({"deleted": bucket})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/info")
@@ -1123,7 +1260,7 @@ def bucket_info(bucket):
             total_size += obj.size or 0
         return jsonify({"name": bucket, "objects": count, "size": total_size})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 # ─── FILES ────────────────────────────────────────────────────────────────────
@@ -1150,7 +1287,7 @@ def list_files(bucket):
             })
         return jsonify(items)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/files/upload", methods=["POST"])
@@ -1161,6 +1298,8 @@ def upload_file(bucket):
         return jsonify({"error": "No file"}), 400
 
     f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "Missing file name"}), 400
     key = f"{prefix}{f.filename}"
     mime = mimetypes.guess_type(f.filename)[0] or "application/octet-stream"
     
@@ -1178,7 +1317,14 @@ def upload_file(bucket):
         )
         return jsonify({"uploaded": key}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
+
+
+_ACTIVE_MIME_TYPES = {
+    "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml",
+    "application/xml", "application/javascript", "text/javascript",
+    "application/x-javascript", "text/css",
+}
 
 
 @app.route("/api/buckets/<bucket>/files/view")
@@ -1193,12 +1339,26 @@ def view_file(bucket):
         response = request.client.get_object(bucket, key)
         mime     = mimetypes.guess_type(key)[0] or "application/octet-stream"
 
-        is_inline = mime.startswith(("image/", "video/", "audio/", "text/")) or \
-                    mime in ("application/json", "application/javascript", "application/pdf")
+        # Bucket contents are untrusted and this endpoint shares the panel's
+        # origin. Anything a browser would execute (HTML, SVG, XML, JS) goes out
+        # as plain text; the UI re-types it itself and renders HTML only in an
+        # iframe sandboxed without allow-same-origin.
+        if mime in _ACTIVE_MIME_TYPES or mime.endswith(("+xml", "/xml")):
+            mime = "text/plain; charset=utf-8"
 
-        headers = {"Content-Type": mime}
+        is_inline = mime.startswith(("image/", "video/", "audio/", "text/")) or \
+                    mime in ("application/json", "application/pdf")
+
+        headers = {
+            "Content-Type": mime,
+            "X-Content-Type-Options": "nosniff",
+            # Even if the response is ever opened directly, it gets an opaque
+            # origin: no scripts, no access to the panel's cookies or API.
+            "Content-Security-Policy": "sandbox",
+            "Cache-Control": "private, no-store",
+        }
         if not is_inline:
-            headers["Content-Disposition"] = f'attachment; filename="{Path(key).name}"'
+            headers["Content-Disposition"] = _content_disposition("attachment", Path(key).name)
 
         def generate():
             try:
@@ -1210,7 +1370,7 @@ def view_file(bucket):
 
         return Response(stream_with_context(generate()), headers=headers)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/files/download")
@@ -1238,22 +1398,28 @@ def download_file(bucket):
             stream_with_context(generate()),
             headers={
                 "Content-Type": mime,
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": _content_disposition("attachment", filename),
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox",
+                "Cache-Control": "private, no-store",
             },
         )
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/files/delete", methods=["POST"])
 @require_auth
 def delete_file(bucket):
-    data      = request.get_json(force=True) or {}
-    key       = (data.get("key") or "").strip()
+    data      = _json_body()
+    key       = str(data.get("key") or "")
     recursive = data.get("recursive", False)
 
     if not key:
         return jsonify({"error": "Missing key"}), 400
+    if recursive and not key.endswith("/"):
+        # Without the slash, prefix "photo" would also wipe "photos/…".
+        return jsonify({"error": "Recursive delete needs a folder key ending in '/'"}), 400
 
     try:
         if recursive:
@@ -1267,31 +1433,51 @@ def delete_file(bucket):
             request.client.remove_object(bucket, key)
         return jsonify({"deleted": key})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/files/rename", methods=["POST"])
 @require_auth
 def rename_file(bucket):
-    data = request.get_json(force=True) or {}
-    src  = (data.get("src") or "").strip()
-    dst  = (data.get("dst") or "").strip()
+    data = _json_body()
+    # Keys are not stripped: leading/trailing spaces are part of an S3 key.
+    src  = str(data.get("src") or "")
+    dst  = str(data.get("dst") or "")
 
     if not src or not dst:
         return jsonify({"error": "Missing src or dst"}), 400
+    if src == dst:
+        # Copy-then-delete onto itself would delete the object.
+        return jsonify({"src": src, "dst": dst})
 
     try:
-        request.client.copy_object(bucket, dst, CopySource(bucket, src))
-        request.client.remove_object(bucket, src)
+        if src.endswith("/"):
+            # A folder is just a prefix: move every object under it.
+            if not dst.endswith("/"):
+                dst += "/"
+            if dst.startswith(src):
+                return jsonify({"error": "Cannot move a folder into itself"}), 400
+            from minio.deleteobjects import DeleteObject
+            names = [o.object_name for o in
+                     request.client.list_objects(bucket, prefix=src, recursive=True)]
+            for n in names:
+                request.client.copy_object(bucket, dst + n[len(src):], CopySource(bucket, n))
+            # Delete only after every copy succeeded.
+            errs = list(request.client.remove_objects(bucket, [DeleteObject(n) for n in names]))
+            if errs:
+                return jsonify({"error": f"Copied, but {len(errs)} source objects could not be deleted"}), 500
+        else:
+            request.client.copy_object(bucket, dst, CopySource(bucket, src))
+            request.client.remove_object(bucket, src)
         return jsonify({"src": src, "dst": dst})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/files/mkdir", methods=["POST"])
 @require_auth
 def make_folder(bucket):
-    data   = request.get_json(force=True) or {}
+    data   = _json_body()
     prefix = (data.get("prefix") or "").strip()
     name   = (data.get("name")   or "").strip()
 
@@ -1303,18 +1489,24 @@ def make_folder(bucket):
         request.client.put_object(bucket, key, io.BytesIO(b""), 0, content_type="application/x-directory")
         return jsonify({"created": f"{prefix}{name}/"}), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/files/share", methods=["POST"])
 @require_auth
 def share_file(bucket):
-    data   = request.get_json(force=True) or {}
-    key    = (data.get("key")    or "").strip()
-    expire_h = int(data.get("expire", 168))
+    data   = _json_body()
+    key    = str(data.get("key") or "")
+    try:
+        expire_h = int(data.get("expire", 168))
+    except (TypeError, ValueError):
+        return jsonify({"error": "expire must be a number of hours"}), 400
 
     if not key:
         return jsonify({"error": "Missing key"}), 400
+    # SigV4 presigned URLs are capped at 7 days.
+    if not 1 <= expire_h <= 168:
+        return jsonify({"error": "expire must be between 1 and 168 hours"}), 400
 
     try:
         import datetime
@@ -1324,7 +1516,7 @@ def share_file(bucket):
         )
         return jsonify({"url": url, "expire": f"{expire_h}h"})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 # ─── BUCKET POLICY ────────────────────────────────────────────────────────────
@@ -1339,16 +1531,16 @@ def get_bucket_policy(bucket):
     except S3Error as e:
         if "NoSuchBucketPolicy" in str(e):
             return jsonify({"policy": None})
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 @app.route("/api/buckets/<bucket>/policy", methods=["PUT"])
 @require_auth
 @require_admin
 def set_bucket_policy(bucket):
-    data   = request.get_json(force=True) or {}
+    data   = _json_body()
     policy = data.get("policy")
 
     try:
@@ -1358,7 +1550,7 @@ def set_bucket_policy(bucket):
             request.client.set_bucket_policy(bucket, json.dumps(policy))
         return jsonify({"ok": True})
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
 
 # ─── PERMISSION MATRIX ────────────────────────────────────────────────────────
@@ -1379,7 +1571,7 @@ def permission_matrix():
             users_parsed = {}
             policies_raw = admin_request("GET", "/list-canned-policies", request.minio_ak, request.minio_sk)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return _err(e)
 
     try:
         buckets = [b.name for b in request.client.list_buckets()]
@@ -1441,15 +1633,47 @@ def permission_matrix():
         "buckets": buckets,
         "matrix": matrix,
         "userPolicies": {u: v.get("policies", []) for u, v in users_parsed.items()},
+        # Derived from policy text only: ignores Conditions, group policies,
+        # bucket policies and cross-policy Deny. Not an effective-access check.
+        "approximate": True,
     })
 
 
+def _action_matches(actions: list[str], targets: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatchcase(t, a) for a in actions for t in targets)
+
+
+def _resource_buckets(res: str, buckets: list[str]) -> list[str]:
+    """Buckets whose objects a Resource covers, honouring wildcards such as
+    arn:aws:s3:::logs-* or arn:aws:s3:::*/*."""
+    if res == "*":
+        return list(buckets)
+    if not res.startswith("arn:aws:s3:::"):
+        return []
+    bucket_pat = res[len("arn:aws:s3:::"):].split("/", 1)[0]
+    return [b for b in buckets if fnmatch.fnmatchcase(b, bucket_pat)]
+
+
 def _parse_policy_access(policy_doc: dict, buckets: list[str]) -> dict[str, str]:
-    import re as _re
-    result = {}
+    """Approximate per-bucket access from a policy document.
+
+    Read means object reads (GetObject), write means PutObject/DeleteObject —
+    s3:ListAllMyBuckets or GetBucketLocation alone grant neither. Deny
+    statements are applied after Allows. Statements with a Condition are
+    skipped (both Allow and Deny), so conditional access is not shown."""
+    READ  = ("s3:GetObject",)
+    WRITE = ("s3:PutObject", "s3:DeleteObject")
+    allow: dict[str, set] = {}
+    deny:  dict[str, set] = {}
+
     statements = policy_doc.get("Statement", [])
+    if isinstance(statements, dict):
+        statements = [statements]
     for stmt in statements:
-        if stmt.get("Effect") != "Allow":
+        if not isinstance(stmt, dict) or stmt.get("Condition"):
+            continue
+        effect = stmt.get("Effect")
+        if effect not in ("Allow", "Deny"):
             continue
         actions = stmt.get("Action", [])
         if isinstance(actions, str):
@@ -1458,46 +1682,50 @@ def _parse_policy_access(policy_doc: dict, buckets: list[str]) -> dict[str, str]
         if isinstance(resources, str):
             resources = [resources]
 
-        has_read  = any("GetObject" in a or "s3:Get" in a or "s3:List" in a or a == "s3:*" for a in actions)
-        has_write = any("PutObject" in a or "DeleteObject" in a or "s3:Put" in a or a == "s3:*" for a in actions)
+        perms = set()
+        if _action_matches(actions, READ):
+            perms.add("r")
+        if _action_matches(actions, WRITE):
+            perms.add("w")
+        if not perms:
+            continue
 
+        target = allow if effect == "Allow" else deny
         for res in resources:
-            # Wildcard covering all buckets
-            if res in ("*", "arn:aws:s3:::*", "arn:aws:s3:::*/*"):
-                matched = list(buckets)
-            else:
-                # Extract exact bucket name from ARN: arn:aws:s3:::BUCKET or arn:aws:s3:::BUCKET/*
-                m = _re.match(r'^arn:aws:s3:::([^/]+)(/.*)?$', res)
-                matched = []
-                if m:
-                    b = m.group(1)
-                    if b == "*":
-                        matched = list(buckets)
-                    elif b in buckets:
-                        matched = [b]
-                else:
-                    # plain bucket name fallback
-                    matched = [b for b in buckets if b == res]
+            for bucket in _resource_buckets(res, buckets):
+                target.setdefault(bucket, set()).update(perms)
 
-            for bucket in matched:
-                cur = result.get(bucket, "none")
-                if has_read and has_write:
-                    result[bucket] = "rw"
-                elif has_read:
-                    if cur == "none":   result[bucket] = "r"
-                    elif cur == "w":    result[bucket] = "rw"
-                elif has_write:
-                    if cur == "none":   result[bucket] = "w"
-                    elif cur == "r":    result[bucket] = "rw"
+    result = {}
+    for bucket, perms in allow.items():
+        perms = perms - deny.get(bucket, set())
+        if perms:
+            result[bucket] = "rw" if perms == {"r", "w"} else perms.pop()
     return result
+
+
+_BUCKET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+_ADMIN_POLICIES = {"consoleAdmin", "diagnostics"}
 
 
 @app.route("/api/users/<username>/bucket-access", methods=["PUT"])
 @require_auth
 @require_admin
 def set_bucket_access(username):
-    data   = request.get_json(force=True) or {}
+    data   = _json_body()
     access = data.get("access", {})  # {bucketName: 'rw'|'r'|'w'|'none'}
+
+    # This endpoint detaches the user's other policies; run against yourself it
+    # would strip your own admin rights mid-session.
+    if username == request.username:
+        return jsonify({"error": "You cannot edit your own bucket access"}), 400
+    if not isinstance(access, dict):
+        return jsonify({"error": "access must be an object"}), 400
+    for bucket, level in access.items():
+        # Names go straight into ARNs: '*' or 'a*' would grant every bucket.
+        if not isinstance(bucket, str) or not _BUCKET_NAME_RE.match(bucket):
+            return jsonify({"error": f"Invalid bucket name: {bucket!r}"}), 400
+        if level not in ("none", "r", "w", "rw"):
+            return jsonify({"error": f"Invalid access level for {bucket}: {level!r}"}), 400
 
     statements = []
     for bucket, level in access.items():
@@ -1535,7 +1763,7 @@ def set_bucket_access(username):
             admin_request("PUT", f"/add-canned-policy?name={_q(policy_name)}",
                           request.minio_ak, request.minio_sk, body=json.dumps(policy_doc).encode())
     except Exception as e:
-        return jsonify({"error": f"Failed to create policy: {e}"}), 500
+        return _err(e)
 
     # 2. Get current user policies
     try:
@@ -1544,9 +1772,11 @@ def set_bucket_access(username):
     except Exception:
         current = []
 
-    # 3. Detach all policies that are NOT the new custom one
+    # 3. Detach all bucket-scoped policies that are NOT the new custom one.
+    #    Administrative policies are left alone — the matrix only manages
+    #    bucket access and must never silently demote an admin.
     for p in current:
-        if p == policy_name:
+        if p == policy_name or p in _ADMIN_POLICIES:
             continue
         try:
             if ac and _HAS_MINIOADMIN:
